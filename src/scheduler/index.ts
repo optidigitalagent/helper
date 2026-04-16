@@ -11,7 +11,7 @@ export function startScheduler(): void {
     try {
       await runDigestPipeline();
     } catch (err) {
-      logger.error('[scheduler] pipeline error:', err);
+      logger.error('[scheduler] pipeline error:', (err as Error).message ?? String(err));
     }
   });
 }

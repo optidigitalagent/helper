@@ -34,8 +34,11 @@ process.on('SIGINT',  () => shutdown('SIGINT'));
 
 // Prevent unhandled promise rejections from crashing the process
 process.on('unhandledRejection', (reason) => {
-  logger.error('[process] unhandledRejection:', (reason as Error)?.message ?? reason);
+  const msg = reason instanceof Error
+    ? reason.message
+    : typeof reason === 'string' ? reason : 'unknown rejection';
+  logger.error('[process] unhandledRejection:', msg.slice(0, 200));
 });
 process.on('uncaughtException', (err) => {
-  logger.error('[process] uncaughtException:', err.message);
+  logger.error('[process] uncaughtException:', (err.message ?? 'unknown').slice(0, 200));
 });
