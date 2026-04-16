@@ -21,18 +21,22 @@ export async function runDigestPipeline(): Promise<void> {
   const adapters     = [...allAdapters, ...userAdapters];
 
   const rawItems: NormalizedItem[] = [];
+  const fetchStart = Date.now();
   await Promise.allSettled(
     adapters.map(async (adapter) => {
+      const t0 = Date.now();
       try {
         const items = await adapter.fetch(since);
-        logger.info(`[pipeline] ${adapter.name}: ${items.length} items`);
+        const ms = Date.now() - t0;
+        logger.info(`[pipeline] ${adapter.name}: ${items.length} items (${ms}ms)`);
         rawItems.push(...items);
       } catch (err) {
-        logger.error(`[pipeline] ${adapter.name} failed:`, err);
+        const ms = Date.now() - t0;
+        logger.warn(`[pipeline] ${adapter.name} failed (${ms}ms): ${(err as Error).message}`);
       }
     })
   );
-  logger.info(`[pipeline] collected: ${rawItems.length} total`);
+  logger.info(`[pipeline] collected: ${rawItems.length} total in ${Date.now() - fetchStart}ms`);
 
   if (rawItems.length === 0) {
     logger.info('[pipeline] nothing collected — aborting');

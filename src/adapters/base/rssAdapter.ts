@@ -2,7 +2,17 @@ import Parser from 'rss-parser';
 import { NormalizedItem, Category, SourceType, SourceAdapter } from '../../types';
 import { makeId } from '../../utils/hash';
 
-const parser = new Parser();
+const FETCH_TIMEOUT_MS = 9000;
+
+const parser = new Parser({ timeout: FETCH_TIMEOUT_MS });
+
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout>;
+  const race = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+  });
+  return Promise.race([promise, race]).finally(() => clearTimeout(timer));
+}
 
 export interface RssAdapterConfig {
   id:       string;
@@ -18,7 +28,7 @@ export function createRssAdapter(cfg: RssAdapterConfig): SourceAdapter {
     name: cfg.name,
 
     async fetch(since: Date | null): Promise<NormalizedItem[]> {
-      const feed = await parser.parseURL(cfg.feedUrl);
+      const feed = await withTimeout(parser.parseURL(cfg.feedUrl), FETCH_TIMEOUT_MS, cfg.id);
       const now  = new Date();
 
       return (feed.items ?? [])
