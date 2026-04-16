@@ -143,7 +143,9 @@ async function handleAdd(bot: TelegramBot, chatId: number, url: string, note: st
 
     await reply(bot, chatId, `✅ Добавлено в следующий дайджест\n\`${url}\`${note ? `\n_${note}_` : ''}`);
   } catch (err) {
-    await reply(bot, chatId, `❌ ${(err as Error).message}`);
+    const e = err as Error;
+    logger.error('[botCommands] handleAdd error stack:', e.stack ?? e.message);
+    await reply(bot, chatId, `❌ ${e.message}`);
   }
 }
 

@@ -18,7 +18,8 @@
       "Bash(npm run:*)",
       "Bash(ls -la Dockerfile docker-compose.yml)",
       "Bash(ls src/scheduler/)",
-      "Bash(docker compose *)"
+      "Bash(docker compose *)",
+      "Bash(gh auth *)"
     ]
   }
 }
