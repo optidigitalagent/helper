@@ -6,61 +6,73 @@ import { getUserInterests, UserInterest }                   from '../db/userSour
 // Base signal density score. Tier bonus from sourceGovernance.ts is added on top.
 
 export const SOURCE_WEIGHTS: Record<string, number> = {
-  // Market Signals
-  tg_spydell:          28,
-  rss_exponentialview: 22,
-  tg_markettwits:      18,
-  tg_finance_instinct: 14,
-  rss_tc_startups:     16,
-  rss_hackernews:       8,
+  // ── Market / Macro ─────────────────────────────────────────────────────────
+  tg_spydell:          26,
+  rss_exponentialview: 20,
+  tg_markettwits:      16,
+  tg_finance_instinct: 12,
+  rss_tc_startups:     15,
+  rss_hackernews:       9,
 
-  // Crypto
-  tg_hugsfund:            24,
-  tg_bybit_announcements: 20,
-  rss_theblock:           18,
-  tg_falconinvestors:     17,
-  tg_doubletop:           15,
-  tg_finfalconx:          15,
+  // ── Crypto (lower — background signal, not the focus) ─────────────────────
+  tg_hugsfund:            16,
+  tg_bybit_announcements: 12,
+  rss_theblock:           14,
+  tg_falconinvestors:     12,
+  tg_doubletop:           11,
+  tg_finfalconx:          11,
 
-  // Opportunities
-  rss_tldr_ai:          20,
-  rss_simon_willison:   28,
-  rss_one_useful_thing: 23,
-  rss_producthunt_ai:   12,
+  // ── AI Tools / Tech (highest priority) ───────────────────────────────────
+  rss_openai_news:        30,   // official model releases
+  rss_anthropic_blog:     28,   // official releases
+  rss_simon_willison:     30,   // best practical LLM tooling signal
+  rss_one_useful_thing:   24,   // research-backed AI use cases
+  rss_huggingface_blog:   18,   // new open-source models
+  rss_langchain_blog:     22,   // agents / workflow tooling
+  rss_latent_space:       26,   // AI practitioners, deep signal
+  rss_bensbites:          20,   // daily AI digest, curated
+  rss_mit_ai:             13,
+  rss_google_ai_blog:     14,
+  tg_xb_prosmm:           10,
 
-  // Learning
-  rss_karpathy:         35,   // event-level when published
-  rss_interconnects:    20,
+  // ── Opportunities ─────────────────────────────────────────────────────────
+  rss_tldr_ai:          22,
+  rss_producthunt_ai:   13,
+
+  // ── Learning ──────────────────────────────────────────────────────────────
+  rss_karpathy:         38,   // event-level — always essential
+  rss_interconnects:    22,
   rss_import_ai:        18,
-  rss_huggingface_blog: 13,
   rss_ycombinator:      14,
-  rss_openai_news:      26,
-  rss_google_ai_blog:   13,
-  rss_mit_ai:           12,
+  rss_a16z_future:      18,
+  rss_paulgraham:       30,   // rare but gold
 
-  // Thinking
+  // ── Thinking / Strategy ───────────────────────────────────────────────────
   rss_stratechery:      28,
   rss_notboring:        20,
   rss_pmarca:           18,
+  rss_lennys:           16,
   tg_margulan:           8,
-  tg_xb_prosmm:          9,
 
-  // Podcasts
+  // ── Podcasts ──────────────────────────────────────────────────────────────
   rss_lex_fridman:      16,
   rss_invest_like_best: 18,
+  rss_all_in_pod:       15,
+  rss_hard_fork:        13,
+  rss_my_first_million: 14,
 };
 
 // ─── Category Weights ─────────────────────────────────────────────────────────
 
 const CATEGORY_WEIGHTS: Record<Category, number> = {
-  [Category.AI]:             15,   // Technologies / AI Tools — highest priority
-  [Category.Opportunities]:  13,
-  [Category.MarketSignals]:  10,
-  [Category.Thinking]:        9,
-  [Category.Learning]:        8,
-  [Category.Crypto]:          8,   // reduced to prevent crypto dominance
-  [Category.Podcast]:         4,
-  [Category.Macro]:           5,   // legacy
+  [Category.AI]:             20,   // Technologies / AI Tools — top priority
+  [Category.Opportunities]:  16,   // actionable stuff
+  [Category.Learning]:       12,   // deep research, rare high-value
+  [Category.Thinking]:       10,   // strategy, founder frameworks
+  [Category.MarketSignals]:   8,   // background signal
+  [Category.Podcast]:         6,
+  [Category.Crypto]:          4,   // background only, no dominance
+  [Category.Macro]:           4,   // legacy
   [Category.Ideas]:           3,   // legacy
 };
 
@@ -110,7 +122,11 @@ function noveltyScore(title: string, content: string): number {
 }
 
 const LEVERAGE_KEYWORDS: RegExp = /\b(automat(e|ion)|10x|save.?time|unfair|asymmetric|multiplier|competi(tive|tor)|moat|edge|leverage|scale|system|framework|arbitrage|underrated|hidden|most.?don.?t|few.?know)\b/i;
-const HIGH_LEVERAGE_SOURCES = new Set(['rss_karpathy', 'rss_simon_willison', 'rss_stratechery', 'tg_spydell', 'rss_interconnects']);
+const HIGH_LEVERAGE_SOURCES = new Set([
+  'rss_karpathy', 'rss_simon_willison', 'rss_stratechery', 'rss_latent_space',
+  'rss_interconnects', 'rss_one_useful_thing', 'rss_anthropic_blog', 'rss_openai_news',
+  'rss_langchain_blog', 'rss_paulgraham',
+]);
 
 function leverageScore(title: string, content: string, source: string): number {
   const text   = `${title} ${content}`;
@@ -195,8 +211,10 @@ function computeScore(item: NormalizedItem): number {
 // Prevent any single group from dominating the pool sent to the LLM.
 
 const CATEGORY_CAP: Partial<Record<Category, number>> = {
-  [Category.Crypto]:        5,   // max 5 crypto items (was flooding the brief)
+  [Category.Crypto]:        3,   // background only — max 3
   [Category.MarketSignals]: 4,   // max 4 market items
+  [Category.AI]:           10,   // wide pool — LLM picks best 5-7
+  [Category.Opportunities]:  7,
 };
 
 // ─── User Interest Score ──────────────────────────────────────────────────────

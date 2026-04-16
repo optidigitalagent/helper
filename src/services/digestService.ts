@@ -2,11 +2,8 @@ import Anthropic from '@anthropic-ai/sdk';
 import OpenAI    from 'openai';
 import {
   RankedItem,
-  MorningBrief,
-  DigestSection,
   Category,
   CATEGORY_ORDER,
-  CATEGORY_LABELS,
 } from '../types';
 
 // ─── Config ───────────────────────────────────────────────────────────────────
@@ -14,83 +11,88 @@ import {
 const LLM_PROVIDER   = (process.env.LLM_PROVIDER ?? 'openai') as 'openai' | 'claude';
 const OPENAI_MODEL   = process.env.OPENAI_MODEL   ?? 'gpt-4o-mini';
 const CLAUDE_MODEL   = process.env.CLAUDE_MODEL   ?? 'claude-3-5-haiku-20241022';
-const MAX_TOKENS     = 2400;
+const MAX_TOKENS     = 3200;
 const TEMPERATURE    = 0.2;
 
-/** Max items per category sent to LLM. Wide enough to have selection, narrow to avoid waste. */
-const ITEMS_PER_CATEGORY = 4;
+// Per-category item cap sent to LLM
+const ITEMS_PER_CATEGORY: Partial<Record<Category, number>> = {
+  [Category.AI]:            8,
+  [Category.Opportunities]: 6,
+  [Category.MarketSignals]: 4,
+  [Category.Crypto]:        3,
+  [Category.Thinking]:      4,
+  [Category.Learning]:      3,
+  [Category.Podcast]:       2,
+};
+const DEFAULT_ITEMS_CAP = 3;
 
 // ─── System Prompt ────────────────────────────────────────────────────────────
 
-const SYSTEM_PROMPT = `Ты — early signal hunter. Не аналитик, не новостной бот.
-
-РОЛЬ: AI/tech scout + idea generator + проводник по возможностям.
+const SYSTEM_PROMPT = `Ты — personal intelligence assistant. Каждое утро готовишь 3 отдельных Telegram-сообщения для человека, который строит AI-системы и ищет преимущество раньше других.
 
 ПРОФИЛЬ ЧИТАТЕЛЯ:
 - Строит AI-системы и автоматизации
-- Ищет инструменты, которые дают edge прямо сейчас
+- Ищет новые инструменты с практическим edge прямо сейчас
 - Хочет знать раньше других: что вышло, что работает, где возможность
-- Нет времени на очевидное и мейнстрим
+- Нет времени на пересказы, очевидное и мотивацию
 
-ФИЛОСОФИЯ ВЫВОДА:
-Читатель открывает сообщение и должен почувствовать:
-"это важно, хочу попробовать, надо действовать"
-— НЕ: "ок, ещё одни новости"
+────────────────────────────────────────────
 
-ПРИОРИТЕТЫ (строго):
-1. ТЕХНОЛОГИИ — что вышло нового (инструмент, фича, сервис, способ использования AI)
-2. ВОЗМОЖНОСТИ — как заработать, какую идею реализовать, какой проект запустить
-3. ИДЕИ — нестандартные гипотезы, тренды, куда всё идёт
-4. РЫНОК — только 2-3 факта, не анализ
-5. ПОДКАСТЫ / ЧТО ИЗУЧИТЬ — только если реально сильное
+БЛОК 1 — РЫНОК, МАКРО, КРИПТА, ГЕОПОЛИТИКА
 
-ЖЁСТКИЙ КРИТЕРИЙ:
-Пункт попадает ТОЛЬКО если читатель может:
-а) попробовать это сегодня, ИЛИ
-б) использовать в своём проекте/бизнесе, ИЛИ
-в) принять решение на основе этого
+Это фоновый блок. Короткий и по делу. Только сигналы, которые реально влияют на решения или бизнес.
+Максимум 4-5 пунктов. Если нечего добавить — блок короче, не растягивай.
 
-ФОРМАТ КАЖДОГО ПУНКТА:
-**[Название](url)** → что это + как использовать/зачем (1 предложение, конкретно)
+Формат каждого пункта (строго):
+• **Что произошло** — почему важно одной фразой → что ожидать / какие последствия
 
-ПРАВИЛА:
-- Максимум 10 bullets суммарно
-- Пустые секции — не включай
-- РЫНОК — максимум 3 коротких пункта (факт + вывод одной фразой)
-- ИДЕИ — не новости, не пересказ. Только оригинальная мысль/гипотеза/сценарий
-- ФИНАЛ — одна фраза: острая, про фокус/дисциплину. Не банальность, не мотивация
-- Весь вывод на русском. Названия инструментов — на английском.
+────────────────────────────────────────────
 
-ФОРМАТ ВЫВОДА (без ## заголовков, строго):
+БЛОК 2 — ТЕХНОЛОГИИ, AI, ИНСТРУМЕНТЫ, ПРОДУКТЫ
 
-РЫНОК:
-- факт → вывод одной фразой (без ссылки если не нужно)
+Главный блок. Приоритет: новые AI модели, tools, workflow, агенты, automation, coding tools, image/video tools, новые фичи.
+5-7 пунктов. Каждый пункт — обязательно с direct link на первоисточник.
 
-ТЕХНОЛОГИИ:
-- **[Название](url)** → что это даёт, как использовать сегодня
+Формат каждого пункта (строго):
+**[Название](url)** — что вышло / что даёт → как использовать → конкретный use case для AI-builder'а или автоматизатора
 
-ВОЗМОЖНОСТИ:
-- **[Название](url)** → конкретная идея: что сделать + как заработать/применить
+Показывай только то, что реально можно использовать или важно знать сегодня.
+Если у источника нет URL — не придумывай, пропусти ссылку.
 
-ИДЕИ:
-[3–4 предложения. Гипотеза или тренд. Куда это ведёт. Что это значит для AI-builder'а. Не новости.]
+────────────────────────────────────────────
 
-ПОДКАСТЫ:
-- **[Название](url)** → одна причина послушать
+БЛОК 3 — ИДЕИ, МЫШЛЕНИЕ, ПОДКАСТЫ, НАПРАВЛЕНИЕ
 
-ЧТО ИЗУЧИТЬ:
-- **[Название](url)** → конкретный навык/инструмент + зачем
+Интерпретативный блок. Не пересказ новостей. Не повторяй то, что уже было в блоках 1 и 2.
 
-ФОКУС:
-[2–3 предложения. Где возможность сегодня. Что попробовать. Что игнорировать. Без воды.]
+Структура (включай только если есть реальный контент):
 
-ФИНАЛ:
-[Одна фраза. Про фокус, дисциплину, путь. Не мотивация.]`;
+🧠 ИДЕИ И ТРЕНДЫ
+2-3 абзаца. Гипотезы. Куда идёт тренд. Что это значит для builder'а. Нестандартные интерпретации. Не мотивация, не банальности.
+
+🎙 ПОДКАСТЫ И ИНТЕРВЬЮ
+Только если среди данных есть реально сильный эпизод.
+**[Название](url)** — одна конкретная причина послушать именно сейчас.
+
+📚 ЧТО ИЗУЧИТЬ
+Только если есть реально полезный ресурс, курс, статья.
+**[Название](url)** — конкретный навык или инструмент + зачем это нужно.
+
+🎯 НАПРАВЛЕНИЕ
+2-3 предложения. Где реальная возможность сегодня. Что попробовать. Что игнорировать. Без воды и мотивации.
+
+_[Одна острая фраза в конце — про фокус, дисциплину или путь. Не банальность.]_
+
+────────────────────────────────────────────
+
+ЖЁСТКИЕ ПРАВИЛА:
+- Весь текст на русском. Названия инструментов / продуктов / компаний — на английском.
+- Никакого filler text, generic фраз, псевдоаналитики
+- Не повторяй одну мысль в разных блоках
+- Если секция пустая — пропусти её полностью
+- Ссылки только из предоставленных данных — не придумывай`;
 
 // ─── Prompt builder ───────────────────────────────────────────────────────────
-
-// Categories merged into РЫНОК — shown together, capped at 5 total
-const MARKET_CATEGORIES = new Set([Category.MarketSignals, Category.Crypto]);
 
 function itemLine(item: RankedItem, i: number): string {
   const confs = item.confirmationsCount && item.confirmationsCount > 0
@@ -100,14 +102,14 @@ function itemLine(item: RankedItem, i: number): string {
   return (
     `[${i + 1}] ${item.sourceName ?? item.source}${confs} — ${item.title}` +
     url +
-    `\n${item.content.slice(0, 300)}`
+    `\n${item.content.slice(0, 350)}`
   );
 }
 
 function buildUserPrompt(grouped: Map<Category, RankedItem[]>): string {
-  const sections: string[] = [];
+  const date = new Date().toLocaleDateString('ru-RU', { weekday: 'long', day: 'numeric', month: 'long' });
 
-  // ── РЫНОК (merged market_signals + crypto, max 5 total) ───────────────────
+  // ── Блок 1: рынок + крипта ────────────────────────────────────────────────
   const marketItems = [
     ...(grouped.get(Category.MarketSignals) ?? []),
     ...(grouped.get(Category.Crypto)        ?? []),
@@ -115,36 +117,47 @@ function buildUserPrompt(grouped: Map<Category, RankedItem[]>): string {
     .sort((a, b) => b.score - a.score)
     .slice(0, 5);
 
-  if (marketItems.length > 0) {
-    sections.push(`## РЫНОК\n${marketItems.map(itemLine).join('\n\n')}`);
-  }
+  // ── Блок 2: технологии + возможности ─────────────────────────────────────
+  const techItems = [
+    ...(grouped.get(Category.AI)            ?? []),
+    ...(grouped.get(Category.Opportunities) ?? []),
+  ]
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 8);
 
-  // ── All other non-market categories in priority order ─────────────────────
-  const otherOrder: Category[] = [
-    Category.AI,
-    Category.Opportunities,
-    Category.Thinking,
-    Category.Learning,
-    Category.Podcast,
+  // ── Блок 3: идеи + обучение + подкасты ───────────────────────────────────
+  const ideasItems = [
+    ...(grouped.get(Category.Thinking) ?? []),
+    ...(grouped.get(Category.Learning) ?? []),
+    ...(grouped.get(Category.Podcast)  ?? []),
+  ]
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 6);
+
+  const sections: string[] = [
+    `## Данные для БЛОКА 1 (РЫНОК/МАКРО/КРИПТА)\n${
+      marketItems.length > 0
+        ? marketItems.map(itemLine).join('\n\n')
+        : '(нет данных)'
+    }`,
+    `## Данные для БЛОКА 2 (ТЕХНОЛОГИИ/AI/ИНСТРУМЕНТЫ)\n${
+      techItems.length > 0
+        ? techItems.map(itemLine).join('\n\n')
+        : '(нет данных)'
+    }`,
+    `## Данные для БЛОКА 3 (ИДЕИ/МЫШЛЕНИЕ/ПОДКАСТЫ)\n${
+      ideasItems.length > 0
+        ? ideasItems.map(itemLine).join('\n\n')
+        : '(нет данных)'
+    }`,
   ];
 
-  for (const cat of otherOrder) {
-    const items = grouped.get(cat);
-    if (!items?.length) continue;
-    const label = cat === Category.AI         ? 'ТЕХНОЛОГИИ'
-                : cat === Category.Opportunities ? 'ВОЗМОЖНОСТИ'
-                : cat === Category.Thinking    ? 'ИДЕИ'
-                : cat === Category.Learning    ? 'ЧТО ИЗУЧИТЬ'
-                : cat === Category.Podcast     ? 'ПОДКАСТЫ'
-                : cat.toUpperCase();
-    sections.push(`## ${label}\n${items.map(itemLine).join('\n\n')}`);
-  }
-
-  const date = new Date().toLocaleDateString('ru-RU', { weekday: 'long', day: 'numeric', month: 'long' });
   return (
     `Дата: ${date}.\n\n` +
-    `Твоя задача: найти сигналы, которые стоит действия. Будь безжалостным — лучше 5 сильных пунктов чем 10 слабых.\n\n` +
-    sections.join('\n\n---\n\n')
+    sections.join('\n\n---\n\n') +
+    `\n\n---\n\n` +
+    `Напиши строго 3 сообщения. Разделяй точно по маркерам:\n` +
+    `===MSG1===\n[блок 1 — рынок]\n===MSG2===\n[блок 2 — технологии]\n===MSG3===\n[блок 3 — идеи]\n===END===`
   );
 }
 
@@ -185,150 +198,61 @@ async function callLLM(prompt: string): Promise<string> {
 
 // ─── Response parser ──────────────────────────────────────────────────────────
 
-const SECTION_MARKERS: Array<{ key: string; category: Category }> = [
-  { key: 'РЫНОК',         category: Category.MarketSignals },
-  { key: 'ТЕХНОЛОГИИ',    category: Category.AI            },
-  { key: 'ВОЗМОЖНОСТИ',   category: Category.Opportunities },
-  { key: 'ИДЕИ',          category: Category.Thinking      },
-  { key: 'ЧТО ИЗУЧИТЬ',  category: Category.Learning      },
-  { key: 'ПОДКАСТЫ',      category: Category.Podcast       },
-  // Legacy / English fallbacks
-  { key: 'MARKET SIGNALS',  category: Category.MarketSignals },
-  { key: 'TECHNOLOGIES',    category: Category.AI            },
-  { key: 'OPPORTUNITIES',   category: Category.Opportunities },
-  { key: 'THINKING',        category: Category.Thinking      },
-  { key: 'LEARNING',        category: Category.Learning      },
-  { key: 'PODCASTS',        category: Category.Podcast       },
-  { key: 'CRYPTO RESEARCH', category: Category.Crypto        },
-  { key: 'CRYPTO',          category: Category.Crypto        },
-  { key: 'AI',              category: Category.AI            },
+const MSG_HEADERS = [
+  { marker: '===MSG1===', label: '📊 *РЫНОК И МАКРО*' },
+  { marker: '===MSG2===', label: '🤖 *ТЕХНОЛОГИИ И ИНСТРУМЕНТЫ*' },
+  { marker: '===MSG3===', label: '🧠 *ИДЕИ И НАПРАВЛЕНИЕ*' },
 ];
 
-// Normalise a raw LLM line to a clean header key:
-//   "## MARKET SIGNALS:"  →  "MARKET SIGNALS"
-//   "WHAT MATTERS TODAY:" →  "WHAT MATTERS TODAY"
-function normaliseHeader(line: string): string {
-  return line.replace(/^#+\s*/, '').replace(/:?\s*$/, '').trim().toUpperCase();
-}
+function parseMessages(raw: string): string[] {
+  const idx: number[] = MSG_HEADERS.map((h) => raw.indexOf(h.marker));
+  const idxEnd = raw.indexOf('===END===');
 
-// All headers that delimit a new block
-const ALL_HEADERS = [
-  // Russian
-  'РЫНОК', 'ТЕХНОЛОГИИ', 'ВОЗМОЖНОСТИ', 'ИДЕИ', 'ЧТО ИЗУЧИТЬ', 'ПОДКАСТЫ', 'ФОКУС', 'ФИНАЛ',
-  // English fallbacks
-  'MARKET SIGNALS', 'TECHNOLOGIES', 'OPPORTUNITIES', 'THINKING', 'LEARNING',
-  'PODCASTS', 'CRYPTO RESEARCH', 'CRYPTO', 'AI', 'FOCUS', 'CLOSING LINE',
-];
+  const result: string[] = [];
 
-function isHeaderLine(line: string): boolean {
-  const key = normaliseHeader(line);
-  return ALL_HEADERS.some((h) => key.startsWith(h));
-}
+  for (let i = 0; i < MSG_HEADERS.length; i++) {
+    const start = idx[i];
+    if (start === -1) continue;
 
-/** Extract the content block following a given header. Stops at next header. */
-function extractBlock(raw: string, header: string): string {
-  const lines  = raw.split('\n');
-  let capturing = false;
-  const out: string[] = [];
+    const contentStart = start + MSG_HEADERS[i].marker.length;
+    // End at next MSG marker or END marker
+    const nextIdx = [idx[i + 1], idxEnd].filter((x) => x !== -1 && x > start);
+    const end = nextIdx.length > 0 ? Math.min(...nextIdx) : raw.length;
 
-  for (const line of lines) {
-    const key = normaliseHeader(line);
-    if (key.startsWith(header.toUpperCase())) {
-      capturing = true;
-      continue;
-    }
-    if (capturing) {
-      if (isHeaderLine(line)) break;
-      out.push(line);
-    }
+    const body = raw.slice(contentStart, end).trim();
+    if (!body) continue;
+
+    result.push(`${MSG_HEADERS[i].label}\n\n${body}`);
   }
 
-  return out.join('\n').trim();
-}
-
-function parseResponse(
-  raw: string,
-  grouped: Map<Category, RankedItem[]>,
-): Omit<MorningBrief, 'date'> {
-  const sections: DigestSection[] = [];
-
-  // Split into blocks at every header line
-  const lines  = raw.split('\n');
-  let currentKey: string | null = null;
-  let currentLines: string[]    = [];
-
-  const MENTOR_HEADERS = ['ФОКУС', 'ФИНАЛ', 'FOCUS', 'CLOSING LINE'];
-
-  function flush(): void {
-    if (!currentKey) return;
-    if (MENTOR_HEADERS.some((h) => currentKey!.startsWith(h))) return; // handled separately
-
-    const match = SECTION_MARKERS.find((m) => currentKey!.startsWith(m.key));
-    if (!match) return;
-
-    const summary = currentLines.join('\n').trim();
-    if (!summary) return;
-
-    sections.push({
-      category: match.category,
-      items:    grouped.get(match.category) ?? [],
-      summary,
-    });
+  // Fallback: if LLM ignored delimiters, return as single message
+  if (result.length === 0) {
+    result.push(raw.trim());
   }
 
-  for (const line of lines) {
-    if (isHeaderLine(line)) {
-      flush();
-      currentKey   = normaliseHeader(line);
-      currentLines = [];
-    } else if (currentKey !== null) {
-      currentLines.push(line);
-    }
-  }
-  flush();
-
-  // Fallback: if nothing parsed, show raw as single block without repeating mentor layer
-  if (sections.length === 0) {
-    const noMentor = raw
-      .split('\n')
-      .filter((l) => !isHeaderLine(l))
-      .join('\n')
-      .trim();
-    sections.push({ category: Category.MarketSignals, items: [], summary: noMentor });
-  }
-
-  return {
-    sections,
-    focus:       extractBlock(raw, 'ФОКУС') || extractBlock(raw, 'FOCUS'),
-    closingLine: extractBlock(raw, 'ФИНАЛ') || extractBlock(raw, 'CLOSING LINE'),
-  };
+  return result;
 }
 
 // ─── DigestService ────────────────────────────────────────────────────────────
 
 export class DigestService {
-  async generateBrief(items: RankedItem[]): Promise<MorningBrief> {
+  /** Returns an array of up to 3 ready-to-send Telegram message strings. */
+  async generateBrief(items: RankedItem[]): Promise<string[]> {
     const grouped = this.groupByCategory(items);
     const prompt  = buildUserPrompt(grouped);
     const raw     = await callLLM(prompt);
-    const parsed  = parseResponse(raw, grouped);
-
-    return {
-      date:        new Date().toISOString().slice(0, 10),
-      sections:    parsed.sections,
-      focus:       parsed.focus,
-      closingLine: parsed.closingLine,
-    };
+    return parseMessages(raw);
   }
 
   private groupByCategory(items: RankedItem[]): Map<Category, RankedItem[]> {
     const map = new Map<Category, RankedItem[]>();
 
     for (const category of CATEGORY_ORDER) {
+      const cap    = ITEMS_PER_CATEGORY[category] ?? DEFAULT_ITEMS_CAP;
       const bucket = items
         .filter((i) => i.category === category)
         .sort((a, b) => b.score - a.score)
-        .slice(0, ITEMS_PER_CATEGORY);
+        .slice(0, cap);
 
       if (bucket.length > 0) map.set(category, bucket);
     }

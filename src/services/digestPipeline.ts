@@ -9,7 +9,7 @@ import { isSkipped }     from './botCommands';
 import { upsertItems, getUnsentItems, markSent, saveDigest } from '../db/itemsRepo';
 import { config }        from '../config';
 import { logger }        from '../utils/logger';
-import { NormalizedItem, MorningBrief, CATEGORY_LABELS } from '../types';
+import { NormalizedItem } from '../types';
 
 export async function runDigestPipeline(): Promise<void> {
   logger.info('[pipeline] starting');
@@ -75,56 +75,18 @@ export async function runDigestPipeline(): Promise<void> {
   const ranked = rankingService.rank(deduped);
   logger.info(`[pipeline] ranked top: ${ranked.length}`);
 
-  // 6. Generate brief via LLM
-  const brief = await digestService.generateBrief(ranked);
+  // 6. Generate brief via LLM — returns up to 3 message strings
+  const messages = await digestService.generateBrief(ranked);
 
-  // 7. Format and send
-  const message = formatBrief(brief);
-  await sendMessage(message);
+  // 7. Send each message separately
+  for (const msg of messages) {
+    await sendMessage(msg);
+  }
 
-  // 8. Archive
+  // 8. Archive (store all messages joined)
   const sentIds = ranked.map((i) => i.id);
   await markSent(sentIds);
-  await saveDigest(message, sentIds);
+  await saveDigest(messages.join('\n\n─────────────────\n\n'), sentIds);
 
-  logger.info(`[pipeline] done — digest sent with ${sentIds.length} items`);
-}
-
-// ─── Telegram Formatter ───────────────────────────────────────────────────────
-// UX rules:
-//   • header line only — no date noise
-//   • sections separated by blank line
-//   • mentor layer always at bottom
-//   • closing line in italics
-//   • if mentor fields are empty, skip gracefully
-
-
-function formatBrief(brief: MorningBrief): string {
-  const out: string[] = [`📅 *${brief.date}*`];
-
-  // Content sections — deduplicate by label (e.g. Crypto merged into РЫНОК)
-  const seenLabels = new Set<string>();
-  for (const section of brief.sections) {
-    const body = section.summary.trim();
-    if (!body) continue;
-    const label = CATEGORY_LABELS[section.category] ?? section.category.toUpperCase();
-    if (seenLabels.has(label)) continue;
-    seenLabels.add(label);
-    out.push('');
-    out.push(`*${label}*`);
-    out.push(body);
-  }
-
-  // Separator + focus
-  out.push('\n─────────────────');
-
-  if (brief.focus.trim()) {
-    out.push(`🎯 *ФОКУС*\n${brief.focus.trim()}`);
-  }
-
-  if (brief.closingLine.trim()) {
-    out.push(`\n🔥 _${brief.closingLine.trim()}_`);
-  }
-
-  return out.join('\n').trim();
+  logger.info(`[pipeline] done — ${messages.length} message(s) sent, ${sentIds.length} items archived`);
 }

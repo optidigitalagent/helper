@@ -8,7 +8,6 @@ import { SourceAdapter, Category } from '../../types';
 export const opportunitySources: SourceAdapter[] = [
 
   // TLDR AI — daily digest of new AI tools and research, curated by a team
-  // HIGH signal-to-noise ratio, actionable items every day
   createRssAdapter({
     id:       'rss_tldr_ai',
     name:     'TLDR AI',
@@ -17,8 +16,17 @@ export const opportunitySources: SourceAdapter[] = [
     tags:     ['ai-tools', 'new-products', 'daily'],
   }),
 
+  // Ben's Bites — daily AI digest focused on what's new and actionable
+  // High signal-to-noise, covers launches before mainstream
+  createRssAdapter({
+    id:       'rss_bensbites',
+    name:     "Ben's Bites",
+    feedUrl:  'https://bensbites.beehiiv.com/feed',
+    category: Category.Opportunities,
+    tags:     ['ai-tools', 'launches', 'daily', 'curated'],
+  }),
+
   // ProductHunt AI — new AI products before they go mainstream
-  // Filter: items with high votes = validated interest
   createRssAdapter({
     id:       'rss_producthunt_ai',
     name:     'ProductHunt AI',
