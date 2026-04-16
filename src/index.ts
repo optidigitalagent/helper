@@ -1,14 +1,33 @@
 import 'dotenv/config';
 import app from './app';
 import { startScheduler } from './scheduler';
-import { startBotPolling } from './services/telegram';
+import { startBotPolling, getBot } from './services/telegram';
 import { registerBotCommands } from './services/botCommands';
 import { config } from './config';
 import { logger } from './utils/logger';
 
-app.listen(config.port, () => {
+const server = app.listen(config.port, () => {
   logger.info(`[server] listening on port ${config.port}`);
   startScheduler();
   startBotPolling();
   registerBotCommands();
 });
+
+// ── Graceful shutdown ─────────────────────────────────────────────────────────
+// Railway sends SIGTERM before killing the old container on redeploy.
+// Stop polling immediately so the new instance doesn't get a 409 Conflict.
+
+function shutdown(signal: string): void {
+  logger.info(`[server] ${signal} received — stopping bot polling`);
+  getBot().stopPolling()
+    .then(() => {
+      server.close(() => {
+        logger.info('[server] exited cleanly');
+        process.exit(0);
+      });
+    })
+    .catch(() => process.exit(0));
+}
+
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT',  () => shutdown('SIGINT'));
