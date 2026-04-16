@@ -9,15 +9,20 @@ import { logger }    from '../utils/logger';
 let _bot: TelegramBot | null = null;
 
 export function getBot(): TelegramBot {
-  if (!_bot) _bot = new TelegramBot(config.telegram.botToken);
+  if (!_bot) {
+    _bot = new TelegramBot(config.telegram.botToken, {
+      // Long polling: one open connection waits up to 30s for updates.
+      // Replaces the default 300ms short-poll loop — far fewer requests and logs.
+      polling: { interval: 0, params: { timeout: 30 } },
+    });
+  }
   return _bot;
 }
 
 /** Start polling for incoming messages. Call once at app startup. */
 export function startBotPolling(): void {
-  const bot = getBot();
-  bot.startPolling();
-  logger.info('[telegram] bot polling started');
+  getBot(); // bot is already configured with polling:true in constructor
+  logger.info('[telegram] bot started (long-poll, timeout=30s)');
 }
 
 // ─── Sending ──────────────────────────────────────────────────────────────────

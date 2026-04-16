@@ -27,12 +27,12 @@ export async function runDigestPipeline(): Promise<void> {
       const t0 = Date.now();
       try {
         const items = await adapter.fetch(since);
-        const ms = Date.now() - t0;
-        logger.info(`[pipeline] ${adapter.name}: ${items.length} items (${ms}ms)`);
         rawItems.push(...items);
+        if (items.length > 0) {
+          logger.info(`[pipeline] ${adapter.name}: ${items.length} (${Date.now() - t0}ms)`);
+        }
       } catch (err) {
-        const ms = Date.now() - t0;
-        logger.warn(`[pipeline] ${adapter.name} failed (${ms}ms): ${(err as Error).message}`);
+        logger.warn(`[pipeline] SKIP ${adapter.id} (${Date.now() - t0}ms): ${(err as Error).message}`);
       }
     })
   );
