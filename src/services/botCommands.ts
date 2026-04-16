@@ -300,13 +300,8 @@ export function registerBotCommands(): void {
 
   bot.on('polling_error', (err) => {
     const msg = (err as Error).message ?? String(err);
-    // 409 = another instance is already polling — yield immediately, don't spam logs
-    if (msg.includes('409')) {
-      logger.warn('[telegram] 409 Conflict — another instance is running, stopping polling');
-      bot.stopPolling().catch(() => {});
-      return;
-    }
-    // Throttle repeated errors: log at most once per 30s for the same message prefix
+    // 409 = old instance still running, will stop in seconds via SIGTERM handler.
+    // Just log once and let node-telegram-bot-api retry automatically — don't stop polling.
     throttledError('[telegram] polling error', msg.slice(0, 120));
   });
 
