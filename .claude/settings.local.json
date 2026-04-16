@@ -19,7 +19,8 @@
       "Bash(ls -la Dockerfile docker-compose.yml)",
       "Bash(ls src/scheduler/)",
       "Bash(docker compose *)",
-      "Bash(gh auth *)"
+      "Bash(gh auth *)",
+      "Bash(ls C:/Users/Admin/Downloads/helper/.env*)"
     ]
   }
 }

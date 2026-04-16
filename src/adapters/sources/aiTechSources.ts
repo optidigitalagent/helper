@@ -18,14 +18,7 @@ export const aiTechSources: SourceAdapter[] = [
     tags:     ['ai', 'openai', 'official'],
   }),
 
-  // Anthropic blog — Claude releases, safety research, product announcements
-  createRssAdapter({
-    id:       'rss_anthropic_blog',
-    name:     'Anthropic',
-    feedUrl:  'https://www.anthropic.com/rss.xml',
-    category: Category.AI,
-    tags:     ['ai', 'anthropic', 'official', 'claude'],
-  }),
+  // Note: Anthropic does not publish a public RSS feed — removed.
 
   createRssAdapter({
     id:       'rss_huggingface_blog',
@@ -79,15 +72,6 @@ export const aiTechSources: SourceAdapter[] = [
     feedUrl:  'https://jack-clark.net/feed/',
     category: Category.AI,
     tags:     ['ai', 'research', 'weekly'],
-  }),
-
-  // LangChain Blog — practical agents, new integrations, workflow patterns
-  createRssAdapter({
-    id:       'rss_langchain_blog',
-    name:     'LangChain Blog',
-    feedUrl:  'https://blog.langchain.dev/rss/',
-    category: Category.AI,
-    tags:     ['ai', 'agents', 'langchain', 'workflow'],
   }),
 
   // Latent Space — AI practitioners: new models, lab research, deep analysis

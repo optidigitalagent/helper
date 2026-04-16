@@ -34,22 +34,12 @@ export const learningSources: SourceAdapter[] = [
     tags:     ['startups', 'vc', 'founder-insights'],
   }),
 
-  // a16z Future — essays from Andreessen Horowitz on tech, AI, crypto, biotech
-  // Strategic-level thinking from investors with portfolio visibility
+  // a16z AI research blog — confirmed working feed
   createRssAdapter({
     id:       'rss_a16z_future',
-    name:     'a16z Future',
-    feedUrl:  'https://a16z.com/feed/',
+    name:     'a16z',
+    feedUrl:  'https://a16z.com/category/ai-machine-learning/feed/',
     category: Category.Learning,
     tags:     ['vc', 'ai-strategy', 'tech-future', 'essays'],
-  }),
-
-  // Paul Graham essays — rare, but always reshape how you think
-  createRssAdapter({
-    id:       'rss_paulgraham',
-    name:     'Paul Graham',
-    feedUrl:  'http://www.paulgraham.com/rss.html',
-    category: Category.Learning,
-    tags:     ['essays', 'startups', 'thinking', 'rare-gold'],
   }),
 ];

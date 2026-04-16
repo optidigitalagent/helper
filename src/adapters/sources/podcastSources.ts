@@ -26,15 +26,6 @@ export const podcastSources: SourceAdapter[] = [
     tags:     ['podcast', 'investing', 'frameworks'],
   }),
 
-  // All-In Podcast — Chamath, Jason, Sacks, Friedberg — tech, VC, politics, macro
-  createRssAdapter({
-    id:       'rss_all_in_pod',
-    name:     'All-In Podcast',
-    feedUrl:  'https://feeds.megaphone.fm/all-in-with-chamath-jason-sacks-friedberg',
-    category: Category.Podcast,
-    tags:     ['podcast', 'vc', 'tech', 'macro', 'founders'],
-  }),
-
   // Hard Fork (NYT) — tech industry, AI policy, big tech, weekly
   createRssAdapter({
     id:       'rss_hard_fork',
@@ -42,14 +33,5 @@ export const podcastSources: SourceAdapter[] = [
     feedUrl:  'https://feeds.simplecast.com/l2i9YnTd',
     category: Category.Podcast,
     tags:     ['podcast', 'tech', 'ai-policy', 'industry'],
-  }),
-
-  // My First Million — Sam Parr + Shaan Puri, business ideas, opportunities
-  createRssAdapter({
-    id:       'rss_my_first_million',
-    name:     'My First Million',
-    feedUrl:  'https://feeds.megaphone.fm/my-first-million',
-    category: Category.Podcast,
-    tags:     ['podcast', 'business', 'ideas', 'opportunities'],
   }),
 ];

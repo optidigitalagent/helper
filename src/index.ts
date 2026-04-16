@@ -31,3 +31,11 @@ function shutdown(signal: string): void {
 
 process.on('SIGTERM', () => shutdown('SIGTERM'));
 process.on('SIGINT',  () => shutdown('SIGINT'));
+
+// Prevent unhandled promise rejections from crashing the process
+process.on('unhandledRejection', (reason) => {
+  logger.error('[process] unhandledRejection:', (reason as Error)?.message ?? reason);
+});
+process.on('uncaughtException', (err) => {
+  logger.error('[process] uncaughtException:', err.message);
+});
