@@ -1,0 +1,23 @@
+version: '3.9'
+
+services:
+  rsshub:
+    image: diygod/rsshub:latest
+    restart: always
+    ports:
+      - "1200:1200"
+    environment:
+      NODE_ENV: production
+      CACHE_TYPE: memory
+      CACHE_EXPIRE: 300
+
+  bot:
+    build: .
+    restart: always
+    depends_on:
+      - rsshub
+    env_file: .env
+    environment:
+      RSSHUB_BASE_URL: http://rsshub:1200
+    ports:
+      - "3000:3000"

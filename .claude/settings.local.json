@@ -1,0 +1,24 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx tsc:*)",
+      "Bash(npm install:*)",
+      "Bash(dir \"C:\\\\Users\\\\Admin\\\\Downloads\\\\helper\")",
+      "Bash(dir /a \"C:/Users/Admin/Downloads/helper/\")",
+      "Bash(npx ts-node:*)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" \"https://vehwldzljzcdwzjmhami.supabase.co/rest/v1/\")",
+      "Bash(node:*)",
+      "Bash(docker --version)",
+      "Bash(python3 -c \" import sys, json lines = sys.stdin.read\\(\\).strip\\(\\).split\\('\\\\n'\\) for line in lines: try: d = json.loads\\(line\\) if d.get\\('type'\\) == 'user' and 'message' in d: msg = d['message'] if msg.get\\('role'\\) == 'user': content = msg.get\\('content', ''\\) if isinstance\\(content, str\\) and len\\(content\\) > 5: print\\('USER:', content[:300]\\) elif isinstance\\(content, list\\): for c in content: if isinstance\\(c, dict\\) and c.get\\('type'\\) == 'text': print\\('USER:', c.get\\('text',''\\)[:300]\\) elif d.get\\('type'\\) == 'assistant' and 'message' in d: msg = d['message'] if msg.get\\('role'\\) == 'assistant': for c in msg.get\\('content', []\\): if isinstance\\(c, dict\\) and c.get\\('type'\\) == 'text': print\\('ASST:', c.get\\('text',''\\)[:300]\\) except: pass \")",
+      "Bash(python3 -c ':*)",
+      "Bash(docker run:*)",
+      "Bash(docker info:*)",
+      "Bash(docker version:*)",
+      "Bash(curl:*)",
+      "Bash(npm run:*)",
+      "Bash(ls -la Dockerfile docker-compose.yml)",
+      "Bash(ls src/scheduler/)",
+      "Bash(docker compose *)"
+    ]
+  }
+}
