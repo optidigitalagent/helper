@@ -10,7 +10,8 @@ import { upsertItems, getUnsentItems, markSent, saveDigest } from '../db/itemsRe
 import { config }        from '../config';
 import { logger }        from '../utils/logger';
 import { NormalizedItem, Category, SourceType } from '../types';
-import { recordSourceSignal } from '../db/sourceReputationRepo';
+import { recordSourceSignal }  from '../db/sourceReputationRepo';
+import { fillGapsWithSearch }  from './webSearch';
 
 // Deep/slow sources publish rarely — use a 7-day window so we never miss them
 const DEEP_SOURCE_PREFIXES = ['deep_', 'yt_', 'rss_lex_fridman', 'rss_invest_like_best',
@@ -83,6 +84,30 @@ export async function runDigestPipeline(): Promise<void> {
     return true;
   });
   await upsertItems(deduped_normalized);
+
+  // 3b. Fill sparse categories with Tavily web search
+  const grouped = new Map<Category, NormalizedItem[]>();
+  for (const item of deduped_normalized) {
+    const arr = grouped.get(item.category) ?? [];
+    arr.push(item);
+    grouped.set(item.category, arr);
+  }
+  const webItems = await fillGapsWithSearch(grouped);
+  if (webItems.length > 0) {
+    const webNormalized = normalizer.normalize(
+      webItems.map((item) => ({
+        source: item.source, sourceType: item.sourceType,
+        title: item.title, content: item.content,
+        url: item.url, timestamp: item.timestamp.toISOString(),
+        category: item.category,
+      }))
+    );
+    // Dedupe web items against already-stored items
+    const webSeen = new Set<string>(deduped_normalized.map((i) => i.id));
+    const webNew  = webNormalized.filter((i) => !webSeen.has(i.id));
+    if (webNew.length > 0) await upsertItems(webNew);
+    logger.info(`[pipeline] web search added: ${webNew.length} items`);
+  }
 
   // 4. Load unsent — two windows: 36h for news, 7d for deep/slow categories
   const unsentNews  = await getUnsentItems(since, 80);

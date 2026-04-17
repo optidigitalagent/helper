@@ -6,6 +6,7 @@ import { saveUserSource, listUserSources, deleteUserSource, addInterestKeywords 
 import { saveAnalysis, saveDiscoveredEntities, ingestAnalysisForDigest, listAnalyzedLinks, listDiscoveredEntities } from '../db/knowledgeRepo';
 import { analyzeUrl, LinkAnalysis } from './linkAnalyzer';
 import { recordSourceSignal, listSourceReputations, setSourceStatus, SourceStatus } from '../db/sourceReputationRepo';
+import { searchWeb } from './webSearch';
 import { discoverFeed, extractKeywords } from './sourceDiscovery';
 import { SOURCE_GOVERNANCE } from './sourceGovernance';
 import { logger, throttledError } from '../utils/logger';
@@ -295,6 +296,34 @@ async function handleAnalyze(bot: TelegramBot, chatId: number, url: string | und
   }
 }
 
+// ─── /search ─────────────────────────────────────────────────────────────────
+
+async function handleSearch(bot: TelegramBot, chatId: number, query: string | undefined): Promise<void> {
+  if (!query) {
+    await reply(bot, chatId, '_/search <запрос> — найти в интернете через Tavily_');
+    return;
+  }
+  const msg = await reply(bot, chatId, `🔍 Ищу: _${query}_...`).catch(() => undefined);
+  try {
+    const items = await searchWeb(query, 5);
+    if (items.length === 0) {
+      await reply(bot, chatId, '📭 Ничего не найдено.');
+      return;
+    }
+    const lines = items.map((i) =>
+      `• [${i.title.slice(0, 80)}](${i.url})\n  _${i.content.slice(0, 120).replace(/\n/g, ' ')}_`
+    );
+    const text = `🔎 *Результаты: "${query}"*\n\n${lines.join('\n\n')}`;
+    if (msg) {
+      await bot.editMessageText(text, { chat_id: chatId, message_id: msg.message_id, parse_mode: 'Markdown' }).catch(async () => reply(bot, chatId, text));
+    } else {
+      await reply(bot, chatId, text);
+    }
+  } catch (err) {
+    await bot.sendMessage(chatId, `❌ ${(err as Error).message}`).catch(() => {});
+  }
+}
+
 // ─── /tracked ────────────────────────────────────────────────────────────────
 
 async function handleTracked(bot: TelegramBot, chatId: number): Promise<void> {
@@ -385,6 +414,8 @@ async function handleHelp(bot: TelegramBot, chatId: number): Promise<void> {
     `🔗 *Ссылки*\n` +
     `/add <url> [заметка] — добавить в следующий дайджест\n` +
     `_Или просто скинь ссылку — поймаю автоматически_\n\n` +
+    `🌐 *Поиск*\n` +
+    `/search <запрос> — поиск в интернете через Tavily\n\n` +
     `🧠 *Анализ и обучение*\n` +
     `/analyze <url> — разбор: стоит смотреть? нужно следить за источником?\n` +
     `/tracked — источники по репутации (trusted/tracked/candidate)\n` +
@@ -473,6 +504,12 @@ export function registerBotCommands(): void {
   bot.onText(/^\/analyze(@\w+)?(?:\s+(https?:\/\/\S+))?$/, async (msg, match) => {
     if (!isAuthorized(msg.chat.id)) return;
     await handleAnalyze(bot, msg.chat.id, match?.[2]);
+  });
+
+  // /search <query>
+  bot.onText(/^\/search(@\w+)?(?:\s+(.+))?$/, async (msg, match) => {
+    if (!isAuthorized(msg.chat.id)) return;
+    await handleSearch(bot, msg.chat.id, match?.[2]?.trim());
   });
 
   // /tracked
