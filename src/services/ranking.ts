@@ -1,6 +1,6 @@
-import { NormalizedItem, RankedItem, Category, Confidence } from '../types';
-import { tierBonus, SOURCE_GOVERNANCE }                     from './sourceGovernance';
-import { getUserInterests, UserInterest }                   from '../db/userSourcesRepo';
+import { NormalizedItem, RankedItem, Category, Confidence, SourceType } from '../types';
+import { tierBonus, SOURCE_GOVERNANCE }                                  from './sourceGovernance';
+import { getUserInterests, UserInterest }                                from '../db/userSourcesRepo';
 
 // ─── Source Weights ───────────────────────────────────────────────────────────
 // Base signal density score. Tier bonus from sourceGovernance.ts is added on top.
@@ -18,6 +18,8 @@ export const SOURCE_WEIGHTS: Record<string, number> = {
   tg_hugsfund:            16,
   tg_bybit_announcements: 12,
   rss_theblock:           14,
+  rss_coindesk:           12,
+  rss_decrypt:            11,
   tg_falconinvestors:     12,
   tg_doubletop:           11,
   tg_finfalconx:          11,
@@ -47,7 +49,13 @@ export const SOURCE_WEIGHTS: Record<string, number> = {
   rss_a16z_future:      18,
   rss_paulgraham:       30,   // rare but gold
 
-  // ── Thinking / Strategy ───────────────────────────────────────────────────
+  // ── Deep Knowledge / Thinking ─────────────────────────────────────────────
+  deep_paulgraham:      35,   // rare but always gold
+  deep_farnamstreet:    26,   // mental models, systems thinking
+  deep_benevans:        28,   // tech strategy, market structure
+  deep_notboring:       22,   // deep dives on companies and trends
+  deep_scottgalloway:   20,   // contrarian, blunt, sharp analysis
+  deep_lennys:          22,   // product + growth practitioners
   rss_stratechery:      28,
   rss_notboring:        20,
   rss_pmarca:           18,
@@ -148,6 +156,44 @@ function personalRelevanceScore(title: string, content: string): number {
   return 0;
 }
 
+// ─── Depth Score ─────────────────────────────────────────────────────────────
+// Signals long-form / research / systemic content — raises it above news
+
+const DEPTH_HIGH: RegExp = /\b(research|paper|analysis|deep.?dive|breakdown|how.?it.?works|under.?the.?hood|case.?study|interview|essay|framework|mental.?model|lessons.?learned|report|study|thread|explained|architecture|mechanism|system.?design|behind.?the.?scenes|first.?principles|anatomy)\b/i;
+const DEPTH_LOW:  RegExp = /\b(top\s*\d+|roundup|weekly.?digest|news|update|brief|summary|recap|listicle|highlights)\b/i;
+const DEEP_KNOWLEDGE_SOURCES = new Set([
+  'deep_paulgraham', 'deep_farnamstreet', 'deep_benevans', 'deep_notboring',
+  'deep_scottgalloway', 'deep_lennys', 'deep_ribbonfarm', 'deep_darioamodei',
+  'rss_karpathy', 'rss_interconnects', 'rss_latent_space', 'rss_stratechery',
+  'rss_paulgraham', 'rss_notboring', 'rss_lennys',
+]);
+
+function depthScore(title: string, content: string, sourceType: SourceType, source: string): number {
+  const text       = `${title} ${content}`;
+  const isDeepSrc  = DEEP_KNOWLEDGE_SOURCES.has(source) || sourceType === SourceType.DeepKnowledge;
+  const highMatch  = DEPTH_HIGH.test(text);
+  const lowMatch   = DEPTH_LOW.test(text);
+
+  if (isDeepSrc && highMatch) return 20;
+  if (isDeepSrc)              return 14;
+  if (highMatch && !lowMatch) return 10;
+  if (lowMatch)               return  0;
+  return 3;
+}
+
+// ─── Signal Strength ─────────────────────────────────────────────────────────
+// How much this item should influence a decision today
+
+const SIGNAL_HIGH: RegExp = /\b(now|today|this.?week|immediately|urgent|opportunity|risk|critical|must.?(know|read|use)|game.?changer|shifts?|changes?|major|significant|big|important|breaking|announcement|launched?|released?|available.?now|just)\b/i;
+const SIGNAL_LOW:  RegExp = /\b(historical|retrospective|classic|old|archive|background|context.?only|for.?reference|overview|theory|academic)\b/i;
+
+function signalStrength(title: string, content: string): number {
+  const text = `${title} ${content}`;
+  if (SIGNAL_HIGH.test(text) && !SIGNAL_LOW.test(text)) return 8;
+  if (SIGNAL_LOW.test(text))                            return 0;
+  return 3;
+}
+
 // ─── Confirmation Bonus ───────────────────────────────────────────────────────
 
 function confirmationBonus(confirmationsCount: number): number {
@@ -202,7 +248,9 @@ function computeScore(item: NormalizedItem): number {
     leverageScore(item.title, item.content, item.source) +
     personalRelevanceScore(item.title, item.content) +
     confirmationBonus(item.confirmationsCount ?? 0) +
-    interestScore(item.title, item.content);   // learned from user behaviour
+    interestScore(item.title, item.content) +   // learned from user behaviour
+    depthScore(item.title, item.content, item.sourceType, item.source) +
+    signalStrength(item.title, item.content);
 
   return Math.min(Math.max(total, 0), MAX_SCORE);
 }

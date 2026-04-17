@@ -77,11 +77,12 @@ function detectCategory(title: string, content: string, source: string, preset?:
 // ─── Source type inference ────────────────────────────────────────────────────
 
 const SOURCE_TYPE_HINTS: Array<{ pattern: RegExp; type: SourceType }> = [
-  { pattern: /^tg_/,      type: SourceType.Telegram },
-  { pattern: /^yt_/,      type: SourceType.YouTube  },
-  { pattern: /^rss_/,     type: SourceType.RSS      },
-  { pattern: /^official_/,type: SourceType.Official },
-  { pattern: /^mock/,     type: SourceType.Mock     },
+  { pattern: /^tg_/,      type: SourceType.Telegram      },
+  { pattern: /^yt_/,      type: SourceType.YouTube       },
+  { pattern: /^deep_/,    type: SourceType.DeepKnowledge },
+  { pattern: /^rss_/,     type: SourceType.RSS           },
+  { pattern: /^official_/,type: SourceType.Official      },
+  { pattern: /^mock/,     type: SourceType.Mock          },
 ];
 
 /**

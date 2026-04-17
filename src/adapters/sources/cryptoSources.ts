@@ -53,4 +53,22 @@ export const cryptoSources: SourceAdapter[] = [
     category: Category.Crypto,
     tags:     ['crypto', 'institutional', 'data'],
   }),
+
+  // CoinDesk — market moves, institutional flows, on-chain data
+  createRssAdapter({
+    id:       'rss_coindesk',
+    name:     'CoinDesk',
+    feedUrl:  'https://www.coindesk.com/arc/outboundfeeds/rss/',
+    category: Category.Crypto,
+    tags:     ['crypto', 'markets', 'institutional'],
+  }),
+
+  // Decrypt — products, regulation, DeFi signals
+  createRssAdapter({
+    id:       'rss_decrypt',
+    name:     'Decrypt',
+    feedUrl:  'https://decrypt.co/feed',
+    category: Category.Crypto,
+    tags:     ['crypto', 'defi', 'products', 'regulation'],
+  }),
 ];

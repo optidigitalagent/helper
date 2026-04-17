@@ -3,6 +3,8 @@ import { getBot }            from './telegram';
 import { runDigestPipeline } from './digestPipeline';
 import { getSourceStats, getLastDigest, saveManualItem } from '../db/itemsRepo';
 import { saveUserSource, listUserSources, deleteUserSource, addInterestKeywords } from '../db/userSourcesRepo';
+import { saveAnalysis, saveDiscoveredEntities, ingestAnalysisForDigest, listAnalyzedLinks, listDiscoveredEntities } from '../db/knowledgeRepo';
+import { analyzeUrl, LinkAnalysis } from './linkAnalyzer';
 import { discoverFeed, extractKeywords } from './sourceDiscovery';
 import { SOURCE_GOVERNANCE } from './sourceGovernance';
 import { logger, throttledError } from '../utils/logger';
@@ -210,6 +212,111 @@ async function handleForget(bot: TelegramBot, chatId: number, url: string | unde
   }
 }
 
+// ─── /analyze ─────────────────────────────────────────────────────────────────
+
+async function handleAnalyze(bot: TelegramBot, chatId: number, url: string | undefined): Promise<void> {
+  if (!url) {
+    await reply(bot, chatId, '_/analyze <url> — LLM-анализ ссылки с оценкой качества_');
+    return;
+  }
+
+  const thinking = await reply(bot, chatId, `🔍 Анализирую \`${url}\`...`).catch(() => undefined);
+
+  try {
+    const analysis = await analyzeUrl(url);
+    await saveAnalysis(analysis);
+    await saveDiscoveredEntities(analysis.discovered_entities, url).catch(() => {});
+
+    const score  = analysis.quality_score;
+    const saved  = analysis.should_save;
+    const emoji  = score >= 70 ? '🟢' : score >= 40 ? '🟡' : '🔴';
+    const saveLabel = saved ? ' → *сохранено*' : '';
+
+    const lines: string[] = [
+      `${emoji} *${analysis.title}*`,
+      `_${analysis.source_name}_ · ${analysis.content_type} · ${analysis.knowledge_type}`,
+      ``,
+      `📝 ${analysis.summary}`,
+      ``,
+      `⚡️ *Почему важно:* ${analysis.why_it_matters}`,
+      `🛠 *Применение:* ${analysis.practical_value}`,
+      analysis.use_case ? `💡 *Кейс:* ${analysis.use_case}` : '',
+      ``,
+      `📊 Качество: *${score}/100*${saveLabel}`,
+    ].filter((l) => l !== undefined);
+
+    if (analysis.discovered_entities.length > 0) {
+      lines.push('', `🔎 *Упомянуто:* ${analysis.discovered_entities.map((e) => e.name).join(', ')}`);
+    }
+
+    if (saved) {
+      await ingestAnalysisForDigest(analysis).catch(() => {});
+      lines.push('', '_Добавлено в следующий дайджест_');
+    }
+
+    const text = lines.join('\n');
+    if (thinking) {
+      await bot.editMessageText(text, { chat_id: chatId, message_id: thinking.message_id, parse_mode: 'Markdown' }).catch(() => {});
+    } else {
+      await reply(bot, chatId, text);
+    }
+  } catch (err) {
+    const msg = ((err as Error).message ?? 'Unknown error').slice(0, 300);
+    logger.error('[botCommands] /analyze error:', msg);
+    await bot.sendMessage(chatId, `❌ ${msg}`).catch(() => {});
+  }
+}
+
+// ─── /knowledge ───────────────────────────────────────────────────────────────
+
+async function handleKnowledge(bot: TelegramBot, chatId: number): Promise<void> {
+  try {
+    const links = await listAnalyzedLinks(10);
+    if (links.length === 0) {
+      await reply(bot, chatId, '📭 Нет проанализированных ссылок.\n\n_/analyze <url> — добавить_');
+      return;
+    }
+    const lines = links.map((l) => {
+      const score = l.quality_score;
+      const e = score >= 70 ? '🟢' : score >= 40 ? '🟡' : '🔴';
+      const saved = l.should_save ? ' ✅' : '';
+      return `${e} [${l.title.slice(0, 60)}](${l.url})${saved}\n_${l.knowledge_type} · ${score}/100_`;
+    });
+    await reply(bot, chatId, `📚 *Последние анализы:*\n\n${lines.join('\n\n')}`);
+  } catch (err) {
+    await reply(bot, chatId, `❌ ${(err as Error).message}`);
+  }
+}
+
+// ─── /entities ────────────────────────────────────────────────────────────────
+
+async function handleEntities(bot: TelegramBot, chatId: number, typeFilter?: string): Promise<void> {
+  try {
+    const validTypes = ['tool', 'person', 'channel', 'source', 'company'] as const;
+    type EntityType = typeof validTypes[number];
+    const t = validTypes.find((v) => v === typeFilter) as EntityType | undefined;
+    const entities = await listDiscoveredEntities(t, 20);
+    if (entities.length === 0) {
+      await reply(bot, chatId, '📭 Нет данных.\n\n_/analyze <url> — анализировать ссылку_');
+      return;
+    }
+    const byType = new Map<string, typeof entities>();
+    for (const e of entities) {
+      const arr = byType.get(e.entity_type) ?? [];
+      arr.push(e);
+      byType.set(e.entity_type, arr);
+    }
+    const sections: string[] = [];
+    for (const [type, list] of byType) {
+      const items = list.map((e) => `• ${e.url ? `[${e.name}](${e.url})` : e.name}${e.notes ? ` — _${e.notes}_` : ''}`);
+      sections.push(`*${type.toUpperCase()}*\n${items.join('\n')}`);
+    }
+    await reply(bot, chatId, `🔎 *Обнаруженные объекты*\n\n${sections.join('\n\n')}`);
+  } catch (err) {
+    await reply(bot, chatId, `❌ ${(err as Error).message}`);
+  }
+}
+
 // ─── /help ────────────────────────────────────────────────────────────────────
 
 async function handleHelp(bot: TelegramBot, chatId: number): Promise<void> {
@@ -221,6 +328,10 @@ async function handleHelp(bot: TelegramBot, chatId: number): Promise<void> {
     `🔗 *Ссылки*\n` +
     `/add <url> [заметка] — добавить в следующий дайджест\n` +
     `_Или просто скинь ссылку — поймаю автоматически_\n\n` +
+    `🧠 *Анализ*\n` +
+    `/analyze <url> — LLM-разбор: что это, зачем, применение\n` +
+    `/knowledge — последние проанализированные ссылки\n` +
+    `/entities [tool|person|channel] — обнаруженные объекты\n\n` +
     `📡 *Источники*\n` +
     `/learn <url> — найти RSS и добавить источник навсегда\n` +
     `/learn — список твоих источников\n` +
@@ -298,6 +409,24 @@ export function registerBotCommands(): void {
     const url  = urlMatch[0];
     const note = text.replace(url, '').trim();
     await handleAdd(bot, msg.chat.id, url, note);
+  });
+
+  // /analyze <url>
+  bot.onText(/^\/analyze(@\w+)?(?:\s+(https?:\/\/\S+))?$/, async (msg, match) => {
+    if (!isAuthorized(msg.chat.id)) return;
+    await handleAnalyze(bot, msg.chat.id, match?.[2]);
+  });
+
+  // /knowledge
+  bot.onText(/^\/knowledge(@\w+)?$/, async (msg) => {
+    if (!isAuthorized(msg.chat.id)) return;
+    await handleKnowledge(bot, msg.chat.id);
+  });
+
+  // /entities [type]
+  bot.onText(/^\/entities(@\w+)?(?:\s+(\S+))?$/, async (msg, match) => {
+    if (!isAuthorized(msg.chat.id)) return;
+    await handleEntities(bot, msg.chat.id, match?.[2]);
   });
 
   bot.on('polling_error', (err) => {

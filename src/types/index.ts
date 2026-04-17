@@ -21,12 +21,13 @@ export enum Category {
 
 /** Where a content item originated. */
 export enum SourceType {
-  Telegram = 'telegram',
-  YouTube  = 'youtube',
-  RSS      = 'rss',
-  Website  = 'website',
-  Official = 'official',
-  Mock     = 'mock',
+  Telegram     = 'telegram',
+  YouTube      = 'youtube',
+  RSS          = 'rss',
+  Website      = 'website',
+  Official     = 'official',
+  DeepKnowledge = 'deep_knowledge',  // long-form: research, essays, dev-blogs, interviews
+  Mock         = 'mock',
 }
 
 // ── Raw layer ─────────────────────────────────────────────────────────────────

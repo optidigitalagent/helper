@@ -56,8 +56,14 @@ export async function runDigestPipeline(): Promise<void> {
     }))
   );
 
-  // 3. Persist
-  await upsertItems(normalized);
+  // 3. Persist — dedupe by id before upsert (same URL from 2 sources → same hash → PG error)
+  const seen = new Set<string>();
+  const deduped_normalized = normalized.filter((i) => {
+    if (seen.has(i.id)) return false;
+    seen.add(i.id);
+    return true;
+  });
+  await upsertItems(deduped_normalized);
 
   // 4. Load unsent (exclude skip-listed sources)
   const unsent = (await getUnsentItems(since, 100)).filter((i) => !isSkipped(i.source));

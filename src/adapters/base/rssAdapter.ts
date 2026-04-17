@@ -15,11 +15,12 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
 }
 
 export interface RssAdapterConfig {
-  id:       string;
-  name:     string;
-  feedUrl:  string;
-  category: Category;
-  tags?:    string[];
+  id:          string;
+  name:        string;
+  feedUrl:     string;
+  category:    Category;
+  sourceType?: SourceType;   // override default RSS; use DeepKnowledge for long-form sources
+  tags?:       string[];
 }
 
 export function createRssAdapter(cfg: RssAdapterConfig): SourceAdapter {
@@ -46,7 +47,7 @@ export function createRssAdapter(cfg: RssAdapterConfig): SourceAdapter {
             id:         makeId(cfg.id, uniqueKey),
             source:     cfg.id,
             sourceName: cfg.name,
-            sourceType: SourceType.RSS,
+            sourceType: cfg.sourceType ?? SourceType.RSS,
             category:   cfg.category,
             title:      item.title ?? '(no title)',
             content:    content.slice(0, 2000),
