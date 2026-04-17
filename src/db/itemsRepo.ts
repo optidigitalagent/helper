@@ -33,8 +33,9 @@ export async function upsertItems(items: NormalizedItem[]): Promise<number> {
 export async function getUnsentItems(
   since: Date,
   limit = 40,
+  categories?: Category[],
 ): Promise<NormalizedItem[]> {
-  const { data, error } = await getDb()
+  let query = getDb()
     .from('content_items')
     .select('*')
     .eq('sent', false)
@@ -42,6 +43,11 @@ export async function getUnsentItems(
     .order('score', { ascending: false })
     .limit(limit);
 
+  if (categories && categories.length > 0) {
+    query = query.in('category', categories);
+  }
+
+  const { data, error } = await query;
   if (error) throw new Error(`getUnsentItems failed: ${error.message}`);
   return (data ?? []).map(rowToItem);
 }

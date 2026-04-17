@@ -84,6 +84,42 @@ export const aiTechSources: SourceAdapter[] = [
     tags:     ['ai', 'practitioners', 'research', 'builders'],
   }),
 
+  // VentureBeat AI — product launches, funding, enterprise AI adoption
+  createRssAdapter({
+    id:       'rss_venturebeat_ai',
+    name:     'VentureBeat AI',
+    feedUrl:  'https://venturebeat.com/category/ai/feed/',
+    category: Category.AI,
+    tags:     ['ai', 'industry', 'products', 'enterprise'],
+  }),
+
+  // The Decoder — focused AI news, no fluff, European perspective
+  createRssAdapter({
+    id:       'rss_the_decoder',
+    name:     'The Decoder',
+    feedUrl:  'https://the-decoder.com/feed/',
+    category: Category.AI,
+    tags:     ['ai', 'news', 'focused'],
+  }),
+
+  // Wired AI — mainstream reach, policy + product
+  createRssAdapter({
+    id:       'rss_wired_ai',
+    name:     'Wired AI',
+    feedUrl:  'https://www.wired.com/feed/category/artificial-intelligence/latest/rss',
+    category: Category.AI,
+    tags:     ['ai', 'policy', 'culture', 'mainstream'],
+  }),
+
+  // LangChain blog — agents, tooling, new framework features
+  createRssAdapter({
+    id:       'rss_langchain_blog',
+    name:     'LangChain Blog',
+    feedUrl:  'https://blog.langchain.dev/rss/',
+    category: Category.AI,
+    tags:     ['agents', 'tooling', 'frameworks', 'practical'],
+  }),
+
   // ── Telegram ──────────────────────────────────────────────────────────────
 
   createTelegramAdapter({

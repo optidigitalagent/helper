@@ -17,13 +17,30 @@ export const opportunitySources: SourceAdapter[] = [
   }),
 
   // Ben's Bites — daily AI digest focused on what's new and actionable
-  // High signal-to-noise, covers launches before mainstream
   createRssAdapter({
     id:       'rss_bensbites',
     name:     "Ben's Bites",
-    feedUrl:  'https://bensbites.beehiiv.com/feed',
+    feedUrl:  'https://bensbites.com/feed',
     category: Category.Opportunities,
     tags:     ['ai-tools', 'launches', 'daily', 'curated'],
+  }),
+
+  // The Rundown AI — daily briefing, new tools and use cases
+  createRssAdapter({
+    id:       'rss_rundown_ai',
+    name:     'The Rundown AI',
+    feedUrl:  'https://www.therundown.ai/rss',
+    category: Category.Opportunities,
+    tags:     ['ai-tools', 'daily', 'curated'],
+  }),
+
+  // AI Valley — launches, tools, automation workflows
+  createRssAdapter({
+    id:       'rss_aivalley',
+    name:     'AI Valley',
+    feedUrl:  'https://aivalley.ai/feed/',
+    category: Category.Opportunities,
+    tags:     ['ai-tools', 'new-products', 'launches'],
   }),
 
   // ProductHunt AI — new AI products before they go mainstream

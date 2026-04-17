@@ -62,12 +62,32 @@ export const SOURCE_WEIGHTS: Record<string, number> = {
   rss_lennys:           16,
   tg_margulan:           8,
 
+  // ── New AI sources ────────────────────────────────────────────────────────
+  rss_venturebeat_ai:   18,
+  rss_the_decoder:      20,
+  rss_wired_ai:         14,
+  rss_rundown_ai:       18,
+  rss_aivalley:         12,
+  rss_the_batch:        24,   // Andrew Ng — always worth reading
+  rss_towards_ai:       13,
+  rss_ruder:            20,   // NLP deep-dives
+
   // ── Podcasts ──────────────────────────────────────────────────────────────
-  rss_lex_fridman:      16,
-  rss_invest_like_best: 18,
-  rss_all_in_pod:       15,
-  rss_hard_fork:        13,
-  rss_my_first_million: 14,
+  rss_lex_fridman:        16,
+  rss_invest_like_best:   18,
+  rss_all_in_pod:         15,
+  rss_hard_fork:          13,
+  rss_my_first_million:   14,
+  rss_knowledge_project:  16,
+  rss_a16z_podcast:       14,
+
+  // ── YouTube ───────────────────────────────────────────────────────────────
+  yt_lexfridman:          18,
+  yt_twominutepapers:     20,   // fast research signal
+  yt_yannic:              18,   // deep ML paper reviews
+  yt_3blue1brown:         22,   // rare but exceptional
+  yt_ycombinator:         16,
+  yt_allin:               14,
 };
 
 // ─── Category Weights ─────────────────────────────────────────────────────────

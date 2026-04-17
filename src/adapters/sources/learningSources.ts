@@ -34,12 +34,39 @@ export const learningSources: SourceAdapter[] = [
     tags:     ['startups', 'vc', 'founder-insights'],
   }),
 
-  // a16z AI research blog — confirmed working feed
+  // a16z AI research blog
   createRssAdapter({
     id:       'rss_a16z_future',
     name:     'a16z',
     feedUrl:  'https://a16z.com/category/ai-machine-learning/feed/',
     category: Category.Learning,
     tags:     ['vc', 'ai-strategy', 'tech-future', 'essays'],
+  }),
+
+  // The Batch (DeepLearning.AI) — Andrew Ng weekly, most important AI research
+  createRssAdapter({
+    id:       'rss_the_batch',
+    name:     'The Batch (DeepLearning.AI)',
+    feedUrl:  'https://www.deeplearning.ai/the-batch/feed/',
+    category: Category.Learning,
+    tags:     ['ai', 'research', 'weekly', 'andrew-ng'],
+  }),
+
+  // Towards AI — ML tutorials, research breakdowns, applied AI
+  createRssAdapter({
+    id:       'rss_towards_ai',
+    name:     'Towards AI',
+    feedUrl:  'https://towardsai.net/feed',
+    category: Category.Learning,
+    tags:     ['ml', 'tutorials', 'research', 'applied'],
+  }),
+
+  // Sebastian Ruder — NLP research, best multilingual AI analysis
+  createRssAdapter({
+    id:       'rss_ruder',
+    name:     'Sebastian Ruder',
+    feedUrl:  'https://ruder.io/rss/index.rss',
+    category: Category.Learning,
+    tags:     ['nlp', 'research', 'deep-dive'],
   }),
 ];

@@ -134,28 +134,37 @@ function buildUserPrompt(grouped: Map<Category, RankedItem[]>): string {
     .slice(0, 8);
 
   // ── Блок 3: deep knowledge + идеи + обучение + подкасты ──────────────────
-  const ideasItems = [
+  // Fallback: if deep sources are empty, pull from top AI/Opportunities items
+  const ideasRaw = [
     ...(grouped.get(Category.Thinking) ?? []),
     ...(grouped.get(Category.Learning) ?? []),
     ...(grouped.get(Category.Podcast)  ?? []),
-  ]
-    .sort((a, b) => b.score - a.score)
-    .slice(0, 8);   // расширен: больше deep knowledge материала
+  ].sort((a, b) => b.score - a.score);
+
+  const ideasItems = ideasRaw.length >= 3
+    ? ideasRaw.slice(0, 8)
+    : [
+        ...ideasRaw,
+        // pad with best AI items not already in techItems
+        ...(grouped.get(Category.AI) ?? [])
+          .filter((i) => !techItems.some((t) => t.id === i.id))
+          .slice(0, 6 - ideasRaw.length),
+      ].slice(0, 8);
 
   const sections: string[] = [
     `## Данные для БЛОКА 1 (РЫНОК/МАКРО/КРИПТА)\n${
       marketItems.length > 0
-        ? marketItems.map(itemLine).join('\n\n')
-        : '(нет данных)'
+        ? marketItems.map((i, n) => itemLine(i, n)).join('\n\n')
+        : '(нет свежих данных — напиши что рынки без новостей сегодня)'
     }`,
     `## Данные для БЛОКА 2 (ТЕХНОЛОГИИ/AI/ИНСТРУМЕНТЫ)\n${
       techItems.length > 0
-        ? techItems.map(itemLine).join('\n\n')
+        ? techItems.map((i, n) => itemLine(i, n)).join('\n\n')
         : '(нет данных)'
     }`,
     `## Данные для БЛОКА 3 (ИДЕИ/МЫШЛЕНИЕ/ПОДКАСТЫ)\n${
       ideasItems.length > 0
-        ? ideasItems.map(itemLine).join('\n\n')
+        ? ideasItems.map((i, n) => itemLine(i, n)).join('\n\n')
         : '(нет данных)'
     }`,
   ];

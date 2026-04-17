@@ -7,6 +7,7 @@ import { podcastSources }     from './sources/podcastSources';
 import { learningSources }    from './sources/learningSources';
 import { thinkingSources }    from './sources/thinkingSources';
 import { opportunitySources } from './sources/opportunitySources';
+import { youtubeSources }     from './sources/youtubeSources';
 import { mockSourceAdapter }  from './mockSource';
 
 // Set USE_MOCK_SOURCE=true in .env to run the full pipeline against fake data
@@ -20,7 +21,8 @@ export const allAdapters: SourceAdapter[] = USE_MOCK
       ...opportunitySources,
       ...aiTechSources,
       ...learningSources,
-      ...thinkingSources,   // deep knowledge: essays, interviews, frameworks
+      ...thinkingSources,
       ...businessSources,
       ...podcastSources,
+      ...youtubeSources,
     ];

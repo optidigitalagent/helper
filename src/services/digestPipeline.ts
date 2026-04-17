@@ -9,7 +9,21 @@ import { isSkipped }     from './botCommands';
 import { upsertItems, getUnsentItems, markSent, saveDigest } from '../db/itemsRepo';
 import { config }        from '../config';
 import { logger }        from '../utils/logger';
-import { NormalizedItem } from '../types';
+import { NormalizedItem, Category, SourceType } from '../types';
+
+// Deep/slow sources publish rarely — use a 7-day window so we never miss them
+const DEEP_SOURCE_PREFIXES = ['deep_', 'yt_', 'rss_lex_fridman', 'rss_invest_like_best',
+  'rss_hard_fork', 'rss_all_in_pod', 'rss_my_first_million', 'rss_knowledge_project',
+  'rss_a16z_podcast', 'rss_karpathy', 'rss_interconnects', 'rss_stratechery',
+  'rss_notboring', 'rss_pmarca', 'rss_lennys', 'rss_paulgraham', 'rss_the_batch',
+  'rss_ruder',
+];
+
+function isDeepSource(id: string): boolean {
+  return DEEP_SOURCE_PREFIXES.some((p) => id.startsWith(p));
+}
+
+const DEEP_CATEGORIES = [Category.Learning, Category.Thinking, Category.Podcast];
 
 export async function runDigestPipeline(): Promise<void> {
   logger.info('[pipeline] starting');
@@ -20,13 +34,17 @@ export async function runDigestPipeline(): Promise<void> {
   const userAdapters = await loadUserAdapters();
   const adapters     = [...allAdapters, ...userAdapters];
 
+  const deepSince = new Date(Date.now() - 7 * 24 * 3_600_000);
+
   const rawItems: NormalizedItem[] = [];
   const fetchStart = Date.now();
   await Promise.allSettled(
     adapters.map(async (adapter) => {
       const t0 = Date.now();
       try {
-        const items = await adapter.fetch(since);
+        // Deep/slow sources: 7-day window so we never get empty blocks
+        const adapterSince = isDeepSource(adapter.id) ? deepSince : since;
+        const items = await adapter.fetch(adapterSince);
         rawItems.push(...items);
         if (items.length > 0) {
           logger.info(`[pipeline] ${adapter.name}: ${items.length} (${Date.now() - t0}ms)`);
@@ -65,9 +83,14 @@ export async function runDigestPipeline(): Promise<void> {
   });
   await upsertItems(deduped_normalized);
 
-  // 4. Load unsent (exclude skip-listed sources)
-  const unsent = (await getUnsentItems(since, 100)).filter((i) => !isSkipped(i.source));
-  logger.info(`[pipeline] unsent items: ${unsent.length}`);
+  // 4. Load unsent — two windows: 36h for news, 7d for deep/slow categories
+  const unsentNews  = await getUnsentItems(since, 80);
+  const unsentDeep  = await getUnsentItems(deepSince, 40, DEEP_CATEGORIES);
+  const seenIds     = new Set<string>();
+  const unsent = [...unsentNews, ...unsentDeep]
+    .filter((i) => !isSkipped(i.source))
+    .filter((i) => { if (seenIds.has(i.id)) return false; seenIds.add(i.id); return true; });
+  logger.info(`[pipeline] unsent items: ${unsent.length} (news: ${unsentNews.length}, deep: ${unsentDeep.length})`);
 
   if (unsent.length === 0) {
     logger.info('[pipeline] no unsent items — skipping digest');
