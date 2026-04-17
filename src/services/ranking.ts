@@ -1,6 +1,7 @@
 import { NormalizedItem, RankedItem, Category, Confidence, SourceType } from '../types';
 import { tierBonus, SOURCE_GOVERNANCE }                                  from './sourceGovernance';
 import { getUserInterests, UserInterest }                                from '../db/userSourcesRepo';
+import { getReputationBonuses }                                          from '../db/sourceReputationRepo';
 
 // ─── Source Weights ───────────────────────────────────────────────────────────
 // Base signal density score. Tier bonus from sourceGovernance.ts is added on top.
@@ -268,9 +269,10 @@ function computeScore(item: NormalizedItem): number {
     leverageScore(item.title, item.content, item.source) +
     personalRelevanceScore(item.title, item.content) +
     confirmationBonus(item.confirmationsCount ?? 0) +
-    interestScore(item.title, item.content) +   // learned from user behaviour
+    interestScore(item.title, item.content) +
     depthScore(item.title, item.content, item.sourceType, item.source) +
-    signalStrength(item.title, item.content);
+    signalStrength(item.title, item.content) +
+    (_reputationCache.get(item.source) ?? 0);   // earned reputation bonus
 
   return Math.min(Math.max(total, 0), MAX_SCORE);
 }
@@ -288,14 +290,17 @@ const CATEGORY_CAP: Partial<Record<Category, number>> = {
 // ─── User Interest Score ──────────────────────────────────────────────────────
 // Cached in-memory; refreshed each pipeline run via RankingService.setInterests()
 
-let _interestCache: UserInterest[] = [];
+let _interestCache:    UserInterest[]       = [];
+let _reputationCache: Map<string, number>  = new Map();
 
-/** Call once per pipeline run to refresh the interest cache from DB. */
+/** Call once per pipeline run to refresh both caches from DB. */
 export async function refreshInterestCache(): Promise<void> {
   try {
-    _interestCache = await getUserInterests();
+    _interestCache    = await getUserInterests();
+    _reputationCache  = await getReputationBonuses();
   } catch {
-    _interestCache = [];
+    _interestCache    = [];
+    _reputationCache  = new Map();
   }
 }
 

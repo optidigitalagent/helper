@@ -5,6 +5,7 @@ import { getSourceStats, getLastDigest, saveManualItem } from '../db/itemsRepo';
 import { saveUserSource, listUserSources, deleteUserSource, addInterestKeywords } from '../db/userSourcesRepo';
 import { saveAnalysis, saveDiscoveredEntities, ingestAnalysisForDigest, listAnalyzedLinks, listDiscoveredEntities } from '../db/knowledgeRepo';
 import { analyzeUrl, LinkAnalysis } from './linkAnalyzer';
+import { recordSourceSignal, listSourceReputations, setSourceStatus, SourceStatus } from '../db/sourceReputationRepo';
 import { discoverFeed, extractKeywords } from './sourceDiscovery';
 import { SOURCE_GOVERNANCE } from './sourceGovernance';
 import { logger, throttledError } from '../utils/logger';
@@ -214,49 +215,76 @@ async function handleForget(bot: TelegramBot, chatId: number, url: string | unde
 
 // ─── /analyze ─────────────────────────────────────────────────────────────────
 
+const VERDICT_EMOJI: Record<string, string> = {
+  must_watch:     '🔥 MUST WATCH',
+  worth_watching: '✅ Стоит посмотреть',
+  can_skip:       '⚠️ Можно пропустить',
+  skip:           '🔴 Пропусти',
+};
+
 async function handleAnalyze(bot: TelegramBot, chatId: number, url: string | undefined): Promise<void> {
   if (!url) {
-    await reply(bot, chatId, '_/analyze <url> — LLM-анализ ссылки с оценкой качества_');
+    await reply(bot, chatId, '_/analyze <url> — умный анализ: стоит ли смотреть и нужно ли следить за источником_');
     return;
   }
 
-  const thinking = await reply(bot, chatId, `🔍 Анализирую \`${url}\`...`).catch(() => undefined);
+  const thinking = await reply(bot, chatId, `🔍 Анализирую...`).catch(() => undefined);
 
   try {
     const analysis = await analyzeUrl(url);
     await saveAnalysis(analysis);
     await saveDiscoveredEntities(analysis.discovered_entities, url).catch(() => {});
 
-    const score  = analysis.quality_score;
-    const saved  = analysis.should_save;
-    const emoji  = score >= 70 ? '🟢' : score >= 40 ? '🟡' : '🔴';
-    const saveLabel = saved ? ' → *сохранено*' : '';
+    // Record reputation signal for this source
+    const domain = (() => { try { return new URL(url).hostname.replace(/^www\./, ''); } catch { return url; } })();
+    await recordSourceSignal(
+      `user_${domain}`, analysis.source_name, url,
+      analysis.quality_score, 'user_submit',
+    ).catch(() => {});
+
+    const score   = analysis.quality_score;
+    const verdict = VERDICT_EMOJI[analysis.verdict] ?? '⚠️ Можно пропустить';
+    const scoreBar = '█'.repeat(Math.round(score / 10)) + '░'.repeat(10 - Math.round(score / 10));
 
     const lines: string[] = [
-      `${emoji} *${analysis.title}*`,
-      `_${analysis.source_name}_ · ${analysis.content_type} · ${analysis.knowledge_type}`,
+      `${verdict}`,
+      ``,
+      `*${analysis.title}*`,
+      `_${analysis.source_name}_ · ${analysis.content_type}`,
       ``,
       `📝 ${analysis.summary}`,
-      ``,
-      `⚡️ *Почему важно:* ${analysis.why_it_matters}`,
-      `🛠 *Применение:* ${analysis.practical_value}`,
-      analysis.use_case ? `💡 *Кейс:* ${analysis.use_case}` : '',
-      ``,
-      `📊 Качество: *${score}/100*${saveLabel}`,
-    ].filter((l) => l !== undefined);
+    ];
 
-    if (analysis.discovered_entities.length > 0) {
-      lines.push('', `🔎 *Упомянуто:* ${analysis.discovered_entities.map((e) => e.name).join(', ')}`);
-    }
+    if (analysis.why_it_matters) lines.push(``, `⚡️ ${analysis.why_it_matters}`);
+    if (analysis.practical_value) lines.push(`🛠 ${analysis.practical_value}`);
 
-    if (saved) {
+    lines.push(``, `${scoreBar} ${score}/100`);
+
+    if (analysis.should_save) {
       await ingestAnalysisForDigest(analysis).catch(() => {});
-      lines.push('', '_Добавлено в следующий дайджест_');
+      lines.push(`_→ добавлено в следующий дайджест_`);
     }
 
-    const text = lines.join('\n');
+    // Source tracking suggestion
+    if (analysis.should_track_source) {
+      lines.push(``, `📡 *Источник стоит отслеживать*`);
+      lines.push(`/learn ${url}`);
+    }
+
+    // Similar sources
+    if (analysis.similar_sources.length > 0) {
+      lines.push(``, `🔍 *Похожие источники:*`);
+      for (const s of analysis.similar_sources.slice(0, 3)) {
+        lines.push(`• *${s.name}* — ${s.why}`);
+        lines.push(`  /learn ${s.url}`);
+      }
+    }
+
+    const text = lines.filter(Boolean).join('\n');
     if (thinking) {
-      await bot.editMessageText(text, { chat_id: chatId, message_id: thinking.message_id, parse_mode: 'Markdown' }).catch(() => {});
+      await bot.editMessageText(text, { chat_id: chatId, message_id: thinking.message_id, parse_mode: 'Markdown' }).catch(async () => {
+        await reply(bot, chatId, text);
+      });
     } else {
       await reply(bot, chatId, text);
     }
@@ -264,6 +292,35 @@ async function handleAnalyze(bot: TelegramBot, chatId: number, url: string | und
     const msg = ((err as Error).message ?? 'Unknown error').slice(0, 300);
     logger.error('[botCommands] /analyze error:', msg);
     await bot.sendMessage(chatId, `❌ ${msg}`).catch(() => {});
+  }
+}
+
+// ─── /tracked ────────────────────────────────────────────────────────────────
+
+async function handleTracked(bot: TelegramBot, chatId: number): Promise<void> {
+  try {
+    const trusted   = await listSourceReputations('trusted', 5);
+    const tracked   = await listSourceReputations('tracked', 10);
+    const candidate = await listSourceReputations('candidate', 8);
+
+    const fmt = (r: Awaited<ReturnType<typeof listSourceReputations>>[0]) => {
+      const bar = '█'.repeat(Math.round(r.avgQuality / 10)) + '░'.repeat(10 - Math.round(r.avgQuality / 10));
+      return `• *${r.sourceName}* ${bar} ${r.avgQuality}/100 (×${r.signalCount})`;
+    };
+
+    const sections: string[] = [];
+    if (trusted.length)    sections.push(`🏆 *Trusted (${trusted.length}):*\n${trusted.map(fmt).join('\n')}`);
+    if (tracked.length)    sections.push(`📡 *Tracked (${tracked.length}):*\n${tracked.map(fmt).join('\n')}`);
+    if (candidate.length)  sections.push(`🔭 *Candidates (${candidate.length}):*\n${candidate.map(fmt).join('\n')}`);
+
+    if (sections.length === 0) {
+      await reply(bot, chatId, '📭 Нет отслеживаемых источников.\n\n_/analyze <url> — начать анализировать ссылки_');
+      return;
+    }
+
+    await reply(bot, chatId, sections.join('\n\n'));
+  } catch (err) {
+    await reply(bot, chatId, `❌ ${(err as Error).message}`);
   }
 }
 
@@ -328,8 +385,9 @@ async function handleHelp(bot: TelegramBot, chatId: number): Promise<void> {
     `🔗 *Ссылки*\n` +
     `/add <url> [заметка] — добавить в следующий дайджест\n` +
     `_Или просто скинь ссылку — поймаю автоматически_\n\n` +
-    `🧠 *Анализ*\n` +
-    `/analyze <url> — LLM-разбор: что это, зачем, применение\n` +
+    `🧠 *Анализ и обучение*\n` +
+    `/analyze <url> — разбор: стоит смотреть? нужно следить за источником?\n` +
+    `/tracked — источники по репутации (trusted/tracked/candidate)\n` +
     `/knowledge — последние проанализированные ссылки\n` +
     `/entities [tool|person|channel] — обнаруженные объекты\n\n` +
     `📡 *Источники*\n` +
@@ -415,6 +473,12 @@ export function registerBotCommands(): void {
   bot.onText(/^\/analyze(@\w+)?(?:\s+(https?:\/\/\S+))?$/, async (msg, match) => {
     if (!isAuthorized(msg.chat.id)) return;
     await handleAnalyze(bot, msg.chat.id, match?.[2]);
+  });
+
+  // /tracked
+  bot.onText(/^\/tracked(@\w+)?$/, async (msg) => {
+    if (!isAuthorized(msg.chat.id)) return;
+    await handleTracked(bot, msg.chat.id);
   });
 
   // /knowledge

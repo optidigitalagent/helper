@@ -10,6 +10,7 @@ import { upsertItems, getUnsentItems, markSent, saveDigest } from '../db/itemsRe
 import { config }        from '../config';
 import { logger }        from '../utils/logger';
 import { NormalizedItem, Category, SourceType } from '../types';
+import { recordSourceSignal } from '../db/sourceReputationRepo';
 
 // Deep/slow sources publish rarely — use a 7-day window so we never miss them
 const DEEP_SOURCE_PREFIXES = ['deep_', 'yt_', 'rss_lex_fridman', 'rss_invest_like_best',
@@ -120,6 +121,19 @@ export async function runDigestPipeline(): Promise<void> {
   const sentIds = ranked.map((i) => i.id);
   await markSent(sentIds);
   await saveDigest(messages.join('\n\n─────────────────\n\n'), sentIds);
+
+  // 9. Update source reputation — every source that made it into the digest gets a signal
+  await Promise.allSettled(
+    ranked.map((item) =>
+      recordSourceSignal(
+        item.source,
+        item.sourceName ?? item.source,
+        undefined,
+        item.score,
+        'digest_sent',
+      )
+    )
+  );
 
   logger.info(`[pipeline] done — ${messages.length} message(s) sent, ${sentIds.length} items archived`);
 }

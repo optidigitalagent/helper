@@ -10,11 +10,19 @@ import { logger }  from '../utils/logger';
 export type ContentType   = 'video' | 'podcast' | 'article' | 'post' | 'channel' | 'interview' | 'tool' | 'site' | 'unknown';
 export type KnowledgeType = 'news' | 'insight' | 'deep_knowledge' | 'tool' | 'learning' | 'podcast' | 'thinking';
 
+export type Verdict = 'must_watch' | 'worth_watching' | 'can_skip' | 'skip';
+
 export interface DiscoveredEntity {
   type:   'tool' | 'person' | 'channel' | 'source' | 'company';
   name:   string;
   url?:   string;
   notes?: string;
+}
+
+export interface SimilarSource {
+  name: string;
+  url:  string;   // website or direct RSS/feed URL
+  why:  string;   // one line: why it's relevant
 }
 
 export interface LinkAnalysis {
@@ -24,12 +32,15 @@ export interface LinkAnalysis {
   content_type:        ContentType;
   knowledge_type:      KnowledgeType;
   category:            Category;
-  summary:             string;      // 1-2 sentences, no fluff
-  why_it_matters:      string;      // one concrete reason
-  practical_value:     string;      // what to do with this now
-  use_case:            string;      // specific scenario
+  summary:             string;
+  why_it_matters:      string;
+  practical_value:     string;
+  use_case:            string;
   quality_score:       number;      // 0–100
   should_save:         boolean;
+  verdict:             Verdict;     // watch/skip decision
+  should_track_source: boolean;     // add this source to watched list
+  similar_sources:     SimilarSource[];
   discovered_entities: DiscoveredEntity[];
 }
 
@@ -111,6 +122,11 @@ JSON-схема ответа:
   "use_case": "конкретный сценарий использования",
   "quality_score": 0-100,
   "should_save": true|false,
+  "verdict": "must_watch|worth_watching|can_skip|skip",
+  "should_track_source": true|false,
+  "similar_sources": [
+    { "name": "...", "url": "сайт или RSS", "why": "одна строка — почему стоит следить" }
+  ],
   "discovered_entities": [
     { "type": "tool|person|channel|source|company", "name": "...", "url": "если есть", "notes": "зачем интересен" }
   ]
@@ -118,11 +134,19 @@ JSON-схема ответа:
 
 Правила оценки quality_score:
 - 70–100: сильный инсайт, новый инструмент, глубокий разбор, ценный источник → should_save=true
-- 40–69: полезная информация, но не уникальная → should_save=false (решает пользователь)
-- 0–39: хайп без пользы, поверхностно, повтор известного → should_save=false
+- 40–69: полезная информация, но не уникальная
+- 0–39: хайп без пользы, поверхностно, повтор известного
 
-Discovered entities: только реально упомянутые и ценные. Не придумывай.
-Весь текст ответа на русском, названия продуктов/инструментов — на английском.`;
+Правила verdict:
+- must_watch: quality≥70, actionable, прямо сейчас полезно
+- worth_watching: quality≥50, стоит изучить при наличии времени
+- can_skip: quality≥30, интересно но не приоритетно
+- skip: quality<30 или нерелевантно
+
+should_track_source=true: если это регулярный источник (подкаст/канал/блог) с высоким качеством.
+similar_sources: 2-3 реальных источника похожей тематики — только если уверен что они существуют.
+Discovered entities: только реально упомянутые. Не придумывай.
+Весь текст на русском, названия продуктов/инструментов — на английском.`;
 
 async function callOpenAI(user: string): Promise<string> {
   const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
@@ -166,6 +190,9 @@ function parseAnalysis(raw: string, url: string, domain: string): LinkAnalysis {
       use_case:            p.use_case            ?? '',
       quality_score:       Math.min(100, Math.max(0, Number(p.quality_score ?? 50))),
       should_save:         Boolean(p.should_save),
+      verdict:             (['must_watch','worth_watching','can_skip','skip'].includes(p.verdict) ? p.verdict : 'can_skip') as Verdict,
+      should_track_source: Boolean(p.should_track_source),
+      similar_sources:     Array.isArray(p.similar_sources) ? p.similar_sources : [],
       discovered_entities: Array.isArray(p.discovered_entities) ? p.discovered_entities : [],
     };
   } catch {
@@ -176,7 +203,10 @@ function parseAnalysis(raw: string, url: string, domain: string): LinkAnalysis {
       content_type: 'unknown', knowledge_type: 'news', category: Category.AI,
       summary: 'Не удалось проанализировать контент.',
       why_it_matters: '', practical_value: '', use_case: '',
-      quality_score: 0, should_save: false, discovered_entities: [],
+      quality_score: 0, should_save: false,
+      verdict: 'skip' as Verdict,
+      should_track_source: false, similar_sources: [],
+      discovered_entities: [],
     };
   }
 }
