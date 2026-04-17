@@ -6,6 +6,7 @@ import {
   SourceType,
   CATEGORY_ORDER,
 } from '../types';
+import { listPodcastInsights, PodcastInsight } from '../db/knowledgeRepo';
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 
@@ -78,10 +79,17 @@ const SYSTEM_PROMPT = `Ты — personal intelligence assistant. Каждое у
 Только если есть сильный эпизод.
 **[Название](url)** — одна причина послушать именно сейчас.
 
-🎯 НАПРАВЛЕНИЕ
-2–3 предложения. Где реальная возможность сегодня. Что попробовать. Что игнорировать.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-_[Одна острая фраза в конце. Не мотивация — фокус.]_
+БЛОК 4 — НАПРАВЛЕНИЕ ДНЯ
+
+Одна короткая мысль. Стиль: подкасты предпринимателей (MFM, Tim Ferriss, Acquired).
+НЕ мотивация ("верь в себя", "ты можешь"). Только про действие, скорость, фокус, системное мышление, тестирование идей.
+1–2 предложения максимум. Одна острая фраза. Без заголовков и эмодзи.
+
+Пример (не копируй, придумай своё):
+"Рынок не ждёт пока ты додумаешь — запусти MVP за 48 часов и посмотри что сломается."
+"Лучший способ понять тренд — построить что-то маленькое на его вершине и посмотреть что упадёт."
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -114,7 +122,7 @@ function itemLine(item: RankedItem, i: number): string {
   );
 }
 
-function buildUserPrompt(grouped: Map<Category, RankedItem[]>): string {
+function buildUserPrompt(grouped: Map<Category, RankedItem[]>, podcastInsights: PodcastInsight[] = []): string {
   const date = new Date().toLocaleDateString('ru-RU', { weekday: 'long', day: 'numeric', month: 'long' });
 
   // ── Блок 1: рынок + крипта ────────────────────────────────────────────────
@@ -169,12 +177,20 @@ function buildUserPrompt(grouped: Map<Category, RankedItem[]>): string {
     }`,
   ];
 
+  const insightsBlock = podcastInsights.length > 0
+    ? `## Контекст из подкастов (используй для стиля БЛОКА 4)\n` +
+      podcastInsights.map((p) =>
+        `— ${p.source_name}: "${p.title}"\n  Суть: ${p.summary.slice(0, 150)}\n  Почему важно: ${p.why_it_matters.slice(0, 100)}`
+      ).join('\n\n')
+    : '';
+
   return (
     `Дата: ${date}.\n\n` +
     sections.join('\n\n---\n\n') +
+    (insightsBlock ? `\n\n---\n\n${insightsBlock}` : '') +
     `\n\n---\n\n` +
-    `Напиши строго 3 сообщения. Разделяй точно по маркерам:\n` +
-    `===MSG1===\n[блок 1 — рынок]\n===MSG2===\n[блок 2 — технологии]\n===MSG3===\n[блок 3 — идеи]\n===END===`
+    `Напиши строго 4 сообщения. Разделяй точно по маркерам:\n` +
+    `===MSG1===\n[блок 1 — рынок]\n===MSG2===\n[блок 2 — технологии]\n===MSG3===\n[блок 3 — инсайды]\n===MSG4===\n[блок 4 — направление дня, 1-2 предложения]\n===END===`
   );
 }
 
@@ -219,6 +235,7 @@ const MSG_HEADERS = [
   { marker: '===MSG1===', label: '📊 *РЫНОК И МАКРО*' },
   { marker: '===MSG2===', label: '🤖 *ТЕХНОЛОГИИ И ИНСТРУМЕНТЫ*' },
   { marker: '===MSG3===', label: '🔍 *ИНСАЙДЫ И DEEP KNOWLEDGE*' },
+  { marker: '===MSG4===', label: '🎯 *НАПРАВЛЕНИЕ ДНЯ*' },
 ];
 
 function parseMessages(raw: string): string[] {
@@ -253,11 +270,12 @@ function parseMessages(raw: string): string[] {
 // ─── DigestService ────────────────────────────────────────────────────────────
 
 export class DigestService {
-  /** Returns an array of up to 3 ready-to-send Telegram message strings. */
+  /** Returns an array of up to 4 ready-to-send Telegram message strings. */
   async generateBrief(items: RankedItem[]): Promise<string[]> {
-    const grouped = this.groupByCategory(items);
-    const prompt  = buildUserPrompt(grouped);
-    const raw     = await callLLM(prompt);
+    const grouped  = this.groupByCategory(items);
+    const insights = await listPodcastInsights(5).catch(() => [] as PodcastInsight[]);
+    const prompt   = buildUserPrompt(grouped, insights);
+    const raw      = await callLLM(prompt);
     return parseMessages(raw);
   }
 

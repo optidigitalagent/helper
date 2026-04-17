@@ -101,6 +101,27 @@ export interface StoredAnalysis {
   created_at:    string;
 }
 
+export interface PodcastInsight {
+  title:          string;
+  source_name:    string;
+  summary:        string;
+  why_it_matters: string;
+  created_at:     string;
+}
+
+/** Fetch recent podcast/thinking analyses for direction message context. */
+export async function listPodcastInsights(limit = 5): Promise<PodcastInsight[]> {
+  const { data, error } = await getDb()
+    .from('analyzed_links')
+    .select('title, source_name, summary, why_it_matters, created_at')
+    .in('knowledge_type', ['podcast', 'thinking'])
+    .order('created_at', { ascending: false })
+    .limit(limit);
+
+  if (error) return [];
+  return (data ?? []) as PodcastInsight[];
+}
+
 /** List recent analyzed links, newest first. */
 export async function listAnalyzedLinks(limit = 20): Promise<StoredAnalysis[]> {
   const { data, error } = await getDb()

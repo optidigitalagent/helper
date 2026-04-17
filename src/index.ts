@@ -9,8 +9,11 @@ import { logger } from './utils/logger';
 const server = app.listen(config.port, () => {
   logger.info(`[server] listening on port ${config.port}`);
   startScheduler();
-  startBotPolling();
+  // Register handlers before polling so no updates are missed
   registerBotCommands();
+  startBotPolling().catch((err) => {
+    logger.error('[server] bot polling failed to start:', (err as Error).message);
+  });
 });
 
 // ── Graceful shutdown ─────────────────────────────────────────────────────────

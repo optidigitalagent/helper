@@ -142,10 +142,12 @@ async function gatherContent(cls: IntentClassification): Promise<{ title: string
 
 // ─── Step 3: format response ─────────────────────────────────────────────────
 
-const FORMAT_SYSTEM = `Ты — персональный куратор контента. Пользователь написал запрос и ты нашёл материалы.
+const FORMAT_SYSTEM = `Ты — персональный куратор контента и эксперт.
 Отвечай на РУССКОМ. Названия инструментов/продуктов — на английском.
 Формат: Telegram Markdown. Компактно, без воды. Максимум 10 строк.
-Если материалов нет — честно скажи что ничего не нашлось и предложи /search <тема>.`;
+ВАЖНО: Если найденных материалов нет или мало — отвечай из своих знаний.
+Объясни тему просто: что это, как работает, где используется, зачем нужно.
+НИКОГДА не пиши "ничего не найдено" — всегда давай полезный ответ.`;
 
 async function formatResponse(
   userText: string,
@@ -182,10 +184,11 @@ ${contentBlock}
 const MIN_QUERY_LENGTH = 4;
 
 /** Keywords that signal an intent query */
-const INTENT_TRIGGERS = /хочу|найди|покажи|дай|что нового|интересует|посоветуй|хочется|want|find|show|give me|looking for|recommend|tell me|explain|best|top|latest/i;
+const INTENT_TRIGGERS = /хочу|найди|покажи|дай|что нового|интересует|посоветуй|хочется|что такое|объясни|как работает|расскажи|что это|что происходит|что значит|want|find|show|give me|looking for|recommend|tell me|explain|what is|how does|how to|best|top|latest/i;
 
 export function isIntentQuery(text: string): boolean {
   if (text.length < MIN_QUERY_LENGTH) return false;
+  if (text.includes('?')) return true;
   return INTENT_TRIGGERS.test(text);
 }
 
@@ -195,4 +198,25 @@ export async function handleIntentQuery(userText: string): Promise<string> {
   logger.info(`[intent] classified as: ${cls.intent} / topic: "${cls.topic}"`);
   const content = await gatherContent(cls);
   return formatResponse(userText, cls, content);
+}
+
+/** Simple conversational reply — no search, no DB, just LLM */
+export async function chatReply(text: string): Promise<string> {
+  const system = `Ты — умный помощник в Telegram. Отвечай коротко и по делу на русском языке.
+Если вопрос про технологии, AI, бизнес, крипту — дай полезный ответ из своих знаний.
+Если простое приветствие или болтовня — ответь кратко и дружелюбно.
+Без вступлений, без воды. Telegram Markdown.`;
+  return llmCall(system, text, 400);
+}
+
+/** Explain any topic from model knowledge — used as search fallback */
+export async function explainTopic(query: string): Promise<string> {
+  const system = `Ты — эксперт. Объясняй темы простым языком на русском.
+Структура ответа (Telegram Markdown, без воды):
+• Что это — 1–2 предложения
+• Как работает — 2–3 предложения
+• Где используется / зачем — 1–2 предложения
+Максимум 8 строк. Названия продуктов/технологий — на английском.
+Не пиши заголовки — сразу суть.`;
+  return llmCall(system, query, 500);
 }

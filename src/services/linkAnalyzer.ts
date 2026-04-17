@@ -76,10 +76,67 @@ interface FetchedContent {
   description: string;
   body:        string;
   domain:      string;
+  isSparse:    boolean;  // true when we got little/no page content
+}
+
+function isYouTubeUrl(url: string): boolean {
+  return /youtube\.com|youtu\.be/.test(url);
+}
+
+function extractYouTubeId(url: string): string | null {
+  const m = url.match(/(?:v=|youtu\.be\/|\/embed\/|\/shorts\/)([a-zA-Z0-9_-]{11})/);
+  return m ? m[1] : null;
+}
+
+async function fetchYouTubeOEmbed(url: string): Promise<{ title: string; author: string } | null> {
+  try {
+    const oembedUrl = `https://www.youtube.com/oembed?url=${encodeURIComponent(url)}&format=json`;
+    const res = await axios.get(oembedUrl, { timeout: 6_000 });
+    if (res.data?.title) return { title: res.data.title, author: res.data.author_name ?? '' };
+    return null;
+  } catch {
+    return null;
+  }
 }
 
 async function fetchContent(url: string): Promise<FetchedContent> {
   const domain = (() => { try { return new URL(url).hostname.replace(/^www\./, ''); } catch { return url; } })();
+
+  // YouTube: use oEmbed first, then fallback to video ID hint
+  if (isYouTubeUrl(url)) {
+    const videoId = extractYouTubeId(url);
+
+    if (!videoId) {
+      // Plain youtube.com with no video — tell LLM explicitly
+      return {
+        title: 'YouTube (no video ID)',
+        description: 'Generic YouTube link without a specific video',
+        body: 'Ссылка на YouTube без конкретного видео.',
+        domain,
+        isSparse: true,
+      };
+    }
+
+    const oembed = await fetchYouTubeOEmbed(url);
+    if (oembed) {
+      return {
+        title:       oembed.title,
+        description: `YouTube video by ${oembed.author}`,
+        body:        `Канал: ${oembed.author}\nНазвание: ${oembed.title}\nVideo ID: ${videoId}`,
+        domain,
+        isSparse:    false,
+      };
+    }
+
+    // oEmbed failed but we have video ID — give LLM the URL to reason from
+    return {
+      title:       '',
+      description: '',
+      body:        `YouTube video ID: ${videoId}\nURL: ${url}`,
+      domain,
+      isSparse:    true,
+    };
+  }
 
   try {
     const res = await axios.get(url, {
@@ -93,11 +150,12 @@ async function fetchContent(url: string): Promise<FetchedContent> {
     const title       = extractMeta(html, 'title') || html.match(/<title>([^<]{1,200})<\/title>/i)?.[1]?.trim() || '';
     const description = extractMeta(html, 'description');
     const body        = htmlToText(html).slice(0, CONTENT_LIMIT);
+    const isSparse    = body.length < 100 && !title;
 
-    return { title, description, body, domain };
+    return { title, description, body, domain, isSparse };
   } catch (err) {
     logger.warn(`[linkAnalyzer] fetch failed: ${url} — ${(err as Error).message}`);
-    return { title: '', description: '', body: '', domain };
+    return { title: '', description: '', body: '', domain, isSparse: true };
   }
 }
 
@@ -134,14 +192,17 @@ JSON-схема ответа:
 
 Правила оценки quality_score:
 - 70–100: сильный инсайт, новый инструмент, глубокий разбор, ценный источник → should_save=true
-- 40–69: полезная информация, но не уникальная
-- 0–39: хайп без пользы, поверхностно, повтор известного
+- 50–69: полезная информация, стоит сохранить → should_save=true
+- 30–49: интересно, но не приоритетно
+- 0–29: хайп без пользы, совсем нерелевантно
 
 Правила verdict:
 - must_watch: quality≥70, actionable, прямо сейчас полезно
 - worth_watching: quality≥50, стоит изучить при наличии времени
 - can_skip: quality≥30, интересно но не приоритетно
 - skip: quality<30 или нерелевантно
+
+Для YouTube/подкастов от известных авторов (Lex Fridman, Tim Ferriss, Y Combinator, a16z, MFM, Huberman и т.д.) — минимум worth_watching если тема релевантна AI/бизнесу/технологиям.
 
 should_track_source=true: если это регулярный источник (подкаст/канал/блог) с высоким качеством.
 similar_sources: 2-3 реальных источника похожей тематики — только если уверен что они существуют.
@@ -217,12 +278,19 @@ function parseAnalysis(raw: string, url: string, domain: string): LinkAnalysis {
 export async function analyzeUrl(url: string): Promise<LinkAnalysis> {
   const content = await fetchContent(url);
 
+  const sparseHint = content.isSparse
+    ? `\nВАЖНО: страница не отдала текст — оценивай по URL, заголовку и своим знаниям об этом авторе/канале/источнике. Не занижай score только из-за отсутствия текста.`
+    : '';
+
+  const userSentHint = `\nКОНТЕКСТ: пользователь отправил эту ссылку вручную — это уже сигнал интереса. Оценивай честно, но не занижай по умолчанию.`;
+
   const userPrompt = [
     `URL: ${url}`,
     `Заголовок: ${content.title || '(не получен)'}`,
     `Описание: ${content.description || '(нет)'}`,
     `Контент:\n${content.body || '(не получен)'}`,
-  ].join('\n\n');
+    sparseHint + userSentHint,
+  ].filter(Boolean).join('\n\n');
 
   const raw = LLM_PROVIDER === 'claude'
     ? await callClaude(userPrompt)

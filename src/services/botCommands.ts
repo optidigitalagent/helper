@@ -7,7 +7,7 @@ import { saveAnalysis, saveDiscoveredEntities, ingestAnalysisForDigest, listAnal
 import { analyzeUrl, LinkAnalysis } from './linkAnalyzer';
 import { recordSourceSignal, listSourceReputations, setSourceStatus, SourceStatus } from '../db/sourceReputationRepo';
 import { searchWeb }                    from './webSearch';
-import { handleIntentQuery, isIntentQuery } from './intentService';
+import { handleIntentQuery, isIntentQuery, explainTopic, chatReply } from './intentService';
 import { runPushScan }                  from './pushMonitor';
 import { discoverFeed, extractKeywords } from './sourceDiscovery';
 import { SOURCE_GOVERNANCE } from './sourceGovernance';
@@ -235,19 +235,23 @@ async function handleAnalyze(bot: TelegramBot, chatId: number, url: string | und
 
   try {
     const analysis = await analyzeUrl(url);
-    await saveAnalysis(analysis);
-    await saveDiscoveredEntities(analysis.discovered_entities, url).catch(() => {});
 
-    // Record reputation signal for this source
+    // DB saves are non-critical — never let them break the user-facing response
+    saveAnalysis(analysis).catch((e) => logger.warn('[analyze] saveAnalysis:', e.message));
+    saveDiscoveredEntities(analysis.discovered_entities, url).catch(() => {});
+
     const domain = (() => { try { return new URL(url).hostname.replace(/^www\./, ''); } catch { return url; } })();
-    await recordSourceSignal(
+    recordSourceSignal(
       `user_${domain}`, analysis.source_name, url,
       analysis.quality_score, 'user_submit',
     ).catch(() => {});
 
-    const score   = analysis.quality_score;
-    const verdict = VERDICT_EMOJI[analysis.verdict] ?? '⚠️ Можно пропустить';
+    // User manually submitted → always save, minimum score 55
+    const score   = Math.max(analysis.quality_score, 55);
+    const verdict = VERDICT_EMOJI[analysis.verdict] ?? '✅ Стоит посмотреть';
     const scoreBar = '█'.repeat(Math.round(score / 10)) + '░'.repeat(10 - Math.round(score / 10));
+
+    await ingestAnalysisForDigest({ ...analysis, quality_score: score, should_save: true }).catch(() => {});
 
     const lines: string[] = [
       `${verdict}`,
@@ -262,11 +266,7 @@ async function handleAnalyze(bot: TelegramBot, chatId: number, url: string | und
     if (analysis.practical_value) lines.push(`🛠 ${analysis.practical_value}`);
 
     lines.push(``, `${scoreBar} ${score}/100`);
-
-    if (analysis.should_save) {
-      await ingestAnalysisForDigest(analysis).catch(() => {});
-      lines.push(`_→ добавлено в следующий дайджест_`);
-    }
+    lines.push(`_→ добавлено в следующий дайджест_`);
 
     // Source tracking suggestion
     if (analysis.should_track_source) {
@@ -309,7 +309,16 @@ async function handleSearch(bot: TelegramBot, chatId: number, query: string | un
   try {
     const items = await searchWeb(query, 5);
     if (items.length === 0) {
-      await reply(bot, chatId, '📭 Ничего не найдено.');
+      // No web results — explain from model knowledge
+      const explanation = await explainTopic(query).catch(() => null);
+      const text = explanation
+        ? `🧠 *${query}*\n\n${explanation}`
+        : `📭 По запросу "${query}" ничего не нашлось. Попробуй уточнить.`;
+      if (msg) {
+        await bot.editMessageText(text, { chat_id: chatId, message_id: msg.message_id, parse_mode: 'Markdown' }).catch(async () => reply(bot, chatId, text));
+      } else {
+        await reply(bot, chatId, text);
+      }
       return;
     }
     const lines = items.map((i) =>
@@ -506,7 +515,7 @@ export function registerBotCommands(): void {
       return;
     }
 
-    // PULL MODE: intent-based query
+    // PULL MODE: intent-based query (search + recommendations)
     if (isIntentQuery(text)) {
       const thinking = await reply(bot, msg.chat.id, '🤔 Ищу...').catch(() => undefined);
       try {
@@ -514,13 +523,33 @@ export function registerBotCommands(): void {
         if (thinking) {
           await bot.editMessageText(response, {
             chat_id: msg.chat.id, message_id: thinking.message_id, parse_mode: 'Markdown',
-          }).catch(async () => reply(bot, msg.chat.id, response));
+          }).catch(async () => bot.sendMessage(msg.chat.id, response).catch(() => {}));
         } else {
-          await reply(bot, msg.chat.id, response);
+          await bot.sendMessage(msg.chat.id, response, { parse_mode: 'Markdown' }).catch(async () =>
+            bot.sendMessage(msg.chat.id, response).catch(() => {}),
+          );
         }
       } catch (err) {
         await bot.sendMessage(msg.chat.id, `❌ ${(err as Error).message.slice(0, 200)}`).catch(() => {});
       }
+      return;
+    }
+
+    // CHAT MODE: any other text — simple direct LLM reply
+    const thinking = await reply(bot, msg.chat.id, '💬').catch(() => undefined);
+    try {
+      const response = await chatReply(text);
+      if (thinking) {
+        await bot.editMessageText(response, {
+          chat_id: msg.chat.id, message_id: thinking.message_id, parse_mode: 'Markdown',
+        }).catch(async () => bot.sendMessage(msg.chat.id, response).catch(() => {}));
+      } else {
+        await bot.sendMessage(msg.chat.id, response, { parse_mode: 'Markdown' }).catch(async () =>
+          bot.sendMessage(msg.chat.id, response).catch(() => {}),
+        );
+      }
+    } catch (err) {
+      await bot.sendMessage(msg.chat.id, `❌ ${(err as Error).message.slice(0, 200)}`).catch(() => {});
     }
   });
 
@@ -563,13 +592,6 @@ export function registerBotCommands(): void {
   bot.onText(/^\/entities(@\w+)?(?:\s+(\S+))?$/, async (msg, match) => {
     if (!isAuthorized(msg.chat.id)) return;
     await handleEntities(bot, msg.chat.id, match?.[2]);
-  });
-
-  bot.on('polling_error', (err) => {
-    const msg = (err as Error).message ?? String(err);
-    // 409 = old instance still running, will stop in seconds via SIGTERM handler.
-    // Just log once and let node-telegram-bot-api retry automatically — don't stop polling.
-    throttledError('[telegram] polling error', msg.slice(0, 120));
   });
 
   logger.info('[botCommands] commands registered');
