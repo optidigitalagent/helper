@@ -3,38 +3,82 @@ import { NormalizedItem, Category, SourceType } from '../types';
 import { makeId } from '../utils/hash';
 import { logger } from '../utils/logger';
 
-// ─── Config ───────────────────────────────────────────────────────────────────
-
 const TAVILY_KEY = process.env.TAVILY_API_KEY ?? '';
 const ENABLED    = Boolean(TAVILY_KEY);
 
-// ─── Search queries per category ─────────────────────────────────────────────
-// Each query is used when that category has < MIN_ITEMS_THRESHOLD items
+// ─── Domain filters ───────────────────────────────────────────────────────────
+
+// Only results from these high-quality domains (+ YouTube, GitHub always pass)
+const TRUSTED_DOMAINS = [
+  // AI / Tech
+  'openai.com', 'anthropic.com', 'deepmind.google', 'google.com',
+  'huggingface.co', 'arxiv.org', 'paperswithcode.com',
+  'simonwillison.net', 'latent.space', 'interconnects.ai',
+  'oneusefulthing.org', 'jack-clark.net', 'deeplearning.ai',
+  'fast.ai', 'karpathy.ai', 'bounded-regret.ghost.io',
+  // Business / Strategy
+  'stratechery.com', 'notboring.co', 'lennysnewsletter.com',
+  'paulgraham.com', 'fs.blog', 'ben-evans.com', 'profgalloway.com',
+  // News (high quality)
+  'techcrunch.com', 'wired.com', 'venturebeat.com', 'the-decoder.com',
+  'technologyreview.com', 'theverge.com', 'arstechnica.com',
+  'bloomberg.com', 'wsj.com', 'ft.com', 'reuters.com',
+  // Crypto
+  'theblock.co', 'coindesk.com', 'decrypt.co', 'messari.io',
+  // Dev / Engineering
+  'github.com', 'github.blog', 'engineering.atspotify.com',
+  'netflixtechblog.com', 'engineering.fb.com', 'research.google',
+  // YouTube (results come as youtube.com links)
+  'youtube.com', 'youtu.be',
+  // Learning
+  'coursera.org', 'udemy.com', 'edx.org',
+];
+
+// Block these regardless
+const BLOCKED_DOMAINS = [
+  '.ru', '.рф', 'dzen.ru', 'vc.ru', 'habr.com', 'pikabu.ru',
+  'vk.com', 'ok.ru', 'mail.ru', 'yandex.ru',
+  'pinterest.com', 'quora.com', 'reddit.com', 'medium.com',
+];
+
+function isDomainAllowed(url: string): boolean {
+  try {
+    const host = new URL(url).hostname.replace(/^www\./, '');
+    if (BLOCKED_DOMAINS.some((d) => host.endsWith(d.replace(/^\./, '')))) return false;
+    return TRUSTED_DOMAINS.some((d) => host === d || host.endsWith(`.${d}`));
+  } catch {
+    return false;
+  }
+}
+
+// ─── Queries ─────────────────────────────────────────────────────────────────
 
 const MIN_ITEMS_THRESHOLD = 3;
 
+// English-only, specific queries → better results
 const CATEGORY_QUERIES: Partial<Record<Category, string>> = {
-  [Category.AI]:            'new AI tools models released latest 2025',
-  [Category.Opportunities]: 'new AI productivity automation tools open source',
-  [Category.MarketSignals]: 'stock market macro economy tech funding news today',
-  [Category.Crypto]:        'crypto bitcoin market on-chain analysis today',
-  [Category.Thinking]:      'startup founder strategy business model insight essay',
-  [Category.Learning]:      'AI machine learning deep dive research explained',
-  [Category.Podcast]:       'tech AI podcast episode interview latest',
+  [Category.AI]:            'new AI model tool released 2025 site:openai.com OR site:anthropic.com OR site:huggingface.co OR site:github.com',
+  [Category.Opportunities]: 'new open source AI tool automation workflow released 2025',
+  [Category.MarketSignals]: 'tech market funding startup VC news analysis 2025',
+  [Category.Crypto]:        'crypto bitcoin on-chain market analysis institutional 2025',
+  [Category.Thinking]:      'startup founder strategy essay insight 2025',
+  [Category.Learning]:      'AI deep learning tutorial explained research 2025 site:deeplearning.ai OR site:fast.ai OR site:arxiv.org',
+  [Category.Podcast]:       'AI tech podcast interview episode 2025 site:youtube.com',
 };
 
 // ─── Converter ───────────────────────────────────────────────────────────────
 
-function tavilyResultToItem(
+function toItem(
   r: { title?: string; url: string; content?: string; publishedDate?: string },
   category: Category,
 ): NormalizedItem {
-  const now = new Date();
+  const now       = new Date();
+  const isYoutube = r.url.includes('youtube.com') || r.url.includes('youtu.be');
   return {
     id:         makeId('tavily', r.url),
     source:     'tavily_search',
-    sourceName: 'Web Search',
-    sourceType: SourceType.Website,
+    sourceName: isYoutube ? 'YouTube (Search)' : 'Web Search',
+    sourceType: isYoutube ? SourceType.YouTube : SourceType.Website,
     title:      r.title ?? r.url,
     content:    (r.content ?? '').slice(0, 1500),
     url:        r.url,
@@ -42,22 +86,12 @@ function tavilyResultToItem(
     fetchedAt:  now,
     category,
     score:      0,
-    tags:       ['web-search', 'auto'],
+    tags:       ['web-search', isYoutube ? 'video' : 'article'],
   };
 }
 
 // ─── Public API ───────────────────────────────────────────────────────────────
 
-export interface SearchResult {
-  category: Category;
-  items:    NormalizedItem[];
-}
-
-/**
- * For each category that has fewer than MIN_ITEMS_THRESHOLD items,
- * run a Tavily search and return additional NormalizedItems.
- * Safe to call even if TAVILY_API_KEY is not set — returns [] silently.
- */
 export async function fillGapsWithSearch(
   grouped: Map<Category, NormalizedItem[]>,
 ): Promise<NormalizedItem[]> {
@@ -70,16 +104,18 @@ export async function fillGapsWithSearch(
     .filter(([cat]) => (grouped.get(cat)?.length ?? 0) < MIN_ITEMS_THRESHOLD)
     .map(async ([cat, query]) => {
       try {
-        const res = await client.search(query, {
-          searchDepth: 'basic',
-          maxResults:  5,
+        const res   = await client.search(query, {
+          searchDepth:   'advanced',
+          maxResults:    8,
           includeAnswer: false,
         });
-        const items = (res.results ?? []).map((r) => tavilyResultToItem(r, cat));
-        logger.info(`[webSearch] ${cat}: +${items.length} items via Tavily`);
+        const items = (res.results ?? [])
+          .filter((r) => isDomainAllowed(r.url))
+          .map((r) => toItem(r, cat));
+        logger.info(`[webSearch] ${cat}: +${items.length} trusted items`);
         extra.push(...items);
       } catch (err) {
-        logger.warn(`[webSearch] search failed for ${cat}: ${(err as Error).message}`);
+        logger.warn(`[webSearch] ${cat}: ${(err as Error).message}`);
       }
     });
 
@@ -87,12 +123,11 @@ export async function fillGapsWithSearch(
   return extra;
 }
 
-/**
- * Run a single ad-hoc search query. Used by /search bot command.
- */
 export async function searchWeb(query: string, maxResults = 5): Promise<NormalizedItem[]> {
   if (!ENABLED) throw new Error('TAVILY_API_KEY не задан в .env');
   const client = tavily({ apiKey: TAVILY_KEY });
   const res    = await client.search(query, { searchDepth: 'advanced', maxResults });
-  return (res.results ?? []).map((r) => tavilyResultToItem(r, Category.AI));
+  return (res.results ?? [])
+    .filter((r) => isDomainAllowed(r.url))
+    .map((r) => toItem(r, Category.AI));
 }

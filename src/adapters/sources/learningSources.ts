@@ -69,4 +69,49 @@ export const learningSources: SourceAdapter[] = [
     category: Category.Learning,
     tags:     ['nlp', 'research', 'deep-dive'],
   }),
+
+  // fast.ai — Jeremy Howard, practical deep learning (courses + blog)
+  createRssAdapter({
+    id:       'rss_fastai',
+    name:     'fast.ai',
+    feedUrl:  'https://www.fast.ai/index.xml',
+    category: Category.Learning,
+    tags:     ['deep-learning', 'practical', 'courses'],
+  }),
+
+  // Anthropic research blog (atom feed)
+  createRssAdapter({
+    id:       'rss_anthropic_research',
+    name:     'Anthropic Research',
+    feedUrl:  'https://www.anthropic.com/research/rss.xml',
+    category: Category.Learning,
+    tags:     ['ai', 'research', 'alignment', 'official'],
+  }),
+
+  // OpenAI research (separate from news)
+  createRssAdapter({
+    id:       'rss_openai_research',
+    name:     'OpenAI Research',
+    feedUrl:  'https://openai.com/research/rss.xml',
+    category: Category.Learning,
+    tags:     ['ai', 'research', 'papers', 'official'],
+  }),
+
+  // Papers With Code — new ML papers with code, daily
+  createRssAdapter({
+    id:       'rss_paperswithcode',
+    name:     'Papers With Code',
+    feedUrl:  'https://paperswithcode.com/rss.xml',
+    category: Category.Learning,
+    tags:     ['papers', 'ml', 'research', 'code'],
+  }),
+
+  // Google DeepMind blog
+  createRssAdapter({
+    id:       'rss_deepmind',
+    name:     'Google DeepMind',
+    feedUrl:  'https://deepmind.google/blog/rss.xml',
+    category: Category.Learning,
+    tags:     ['ai', 'research', 'deepmind', 'official'],
+  }),
 ];

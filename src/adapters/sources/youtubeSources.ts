@@ -64,4 +64,49 @@ export const youtubeSources: SourceAdapter[] = [
     category:  Category.Podcast,
     tags:      ['podcast', 'markets', 'tech', 'vc'],
   }),
+
+  // Anthropic YouTube — official talks, research, demos
+  createYoutubeAdapter({
+    id:        'yt_anthropic',
+    name:      'Anthropic (YouTube)',
+    channelId: 'UCVanE3TRPBNEhMkbrNQ56tg',
+    category:  Category.Learning,
+    tags:      ['ai', 'claude', 'research', 'official'],
+  }),
+
+  // OpenAI YouTube — demos, DevDay, research talks
+  createYoutubeAdapter({
+    id:        'yt_openai',
+    name:      'OpenAI (YouTube)',
+    channelId: 'UCXZCJLdBC09xxGZ6gcdrc6A',
+    category:  Category.Learning,
+    tags:      ['ai', 'gpt', 'demos', 'official'],
+  }),
+
+  // AI Explained — clear breakdowns of new models and capabilities
+  createYoutubeAdapter({
+    id:        'yt_ai_explained',
+    name:      'AI Explained',
+    channelId: 'UCNJ1Ymd5yFuUPtn21xtRbbw',
+    category:  Category.Learning,
+    tags:      ['ai', 'explainer', 'models', 'analysis'],
+  }),
+
+  // Matt Wolfe — Future Tools, AI tools reviews and news
+  createYoutubeAdapter({
+    id:        'yt_mattwolfe',
+    name:      'Matt Wolfe (Future Tools)',
+    channelId: 'UCx4t4yLuHQ5nSJoHXoMQNTA',
+    category:  Category.Opportunities,
+    tags:      ['ai-tools', 'reviews', 'news', 'practical'],
+  }),
+
+  // Lenny Rachitsky — product strategy, growth, founder talks
+  createYoutubeAdapter({
+    id:        'yt_lenny',
+    name:      "Lenny's Podcast (YouTube)",
+    channelId: 'UCjAmvZDUGM2BwOExH3mMaeg',
+    category:  Category.Thinking,
+    tags:      ['product', 'growth', 'founders', 'strategy'],
+  }),
 ];

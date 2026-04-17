@@ -82,13 +82,25 @@ export const SOURCE_WEIGHTS: Record<string, number> = {
   rss_knowledge_project:  16,
   rss_a16z_podcast:       14,
 
+  // ── New learning / official ───────────────────────────────────────────────
+  rss_fastai:             24,   // Jeremy Howard — always practical
+  rss_anthropic_research: 30,   // official research, very high signal
+  rss_openai_research:    28,
+  rss_paperswithcode:     18,
+  rss_deepmind:           22,
+
   // ── YouTube ───────────────────────────────────────────────────────────────
   yt_lexfridman:          18,
-  yt_twominutepapers:     20,   // fast research signal
-  yt_yannic:              18,   // deep ML paper reviews
-  yt_3blue1brown:         22,   // rare but exceptional
+  yt_twominutepapers:     20,
+  yt_yannic:              18,
+  yt_3blue1brown:         22,
   yt_ycombinator:         16,
   yt_allin:               14,
+  yt_anthropic:           28,   // official Anthropic demos/talks
+  yt_openai:              26,   // official OpenAI
+  yt_ai_explained:        20,
+  yt_mattwolfe:           15,
+  yt_lenny:               16,
 };
 
 // ─── Category Weights ─────────────────────────────────────────────────────────
