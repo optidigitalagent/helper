@@ -6,7 +6,9 @@ import { saveUserSource, listUserSources, deleteUserSource, addInterestKeywords 
 import { saveAnalysis, saveDiscoveredEntities, ingestAnalysisForDigest, listAnalyzedLinks, listDiscoveredEntities } from '../db/knowledgeRepo';
 import { analyzeUrl, LinkAnalysis } from './linkAnalyzer';
 import { recordSourceSignal, listSourceReputations, setSourceStatus, SourceStatus } from '../db/sourceReputationRepo';
-import { searchWeb } from './webSearch';
+import { searchWeb }                    from './webSearch';
+import { handleIntentQuery, isIntentQuery } from './intentService';
+import { runPushScan }                  from './pushMonitor';
 import { discoverFeed, extractKeywords } from './sourceDiscovery';
 import { SOURCE_GOVERNANCE } from './sourceGovernance';
 import { logger, throttledError } from '../utils/logger';
@@ -414,8 +416,12 @@ async function handleHelp(bot: TelegramBot, chatId: number): Promise<void> {
     `🔗 *Ссылки*\n` +
     `/add <url> [заметка] — добавить в следующий дайджест\n` +
     `_Или просто скинь ссылку — поймаю автоматически_\n\n` +
+    `💬 *Просто напиши*\n` +
+    `_"хочу идеи"_ / _"хочу понять AI agents"_ / _"хочу посмотреть по бизнесу"_\n` +
+    `→ система поймёт что нужно и подберёт лучший формат\n\n` +
     `🌐 *Поиск*\n` +
-    `/search <запрос> — поиск в интернете через Tavily\n\n` +
+    `/search <запрос> — поиск в интернете через Tavily\n` +
+    `/push — проверить свежие сильные материалы прямо сейчас\n\n` +
     `🧠 *Анализ и обучение*\n` +
     `/analyze <url> — разбор: стоит смотреть? нужно следить за источником?\n` +
     `/tracked — источники по репутации (trusted/tracked/candidate)\n` +
@@ -486,18 +492,47 @@ export function registerBotCommands(): void {
     await handleAdd(bot, msg.chat.id, url, note);
   });
 
-  // Plain message containing a URL (no command) — auto-add
+  // Plain message: URL → auto-add, intent text → pull mode, other → ignore
   bot.on('message', async (msg) => {
     if (!isAuthorized(msg.chat.id)) return;
     const text = msg.text ?? '';
-    // Skip if it's a command
     if (text.startsWith('/')) return;
+
     const urlMatch = text.match(URL_REGEX);
-    if (!urlMatch) return;
-    // Extract note = everything except the URL
-    const url  = urlMatch[0];
-    const note = text.replace(url, '').trim();
-    await handleAdd(bot, msg.chat.id, url, note);
+    if (urlMatch) {
+      const url  = urlMatch[0];
+      const note = text.replace(url, '').trim();
+      await handleAdd(bot, msg.chat.id, url, note);
+      return;
+    }
+
+    // PULL MODE: intent-based query
+    if (isIntentQuery(text)) {
+      const thinking = await reply(bot, msg.chat.id, '🤔 Ищу...').catch(() => undefined);
+      try {
+        const response = await handleIntentQuery(text);
+        if (thinking) {
+          await bot.editMessageText(response, {
+            chat_id: msg.chat.id, message_id: thinking.message_id, parse_mode: 'Markdown',
+          }).catch(async () => reply(bot, msg.chat.id, response));
+        } else {
+          await reply(bot, msg.chat.id, response);
+        }
+      } catch (err) {
+        await bot.sendMessage(msg.chat.id, `❌ ${(err as Error).message.slice(0, 200)}`).catch(() => {});
+      }
+    }
+  });
+
+  // /push — manual trigger push scan
+  bot.onText(/^\/push(@\w+)?$/, async (msg) => {
+    if (!isAuthorized(msg.chat.id)) return;
+    await reply(bot, msg.chat.id, '🔍 Сканирую свежие сильные материалы...').catch(() => {});
+    try {
+      await runPushScan();
+    } catch (err) {
+      await reply(bot, msg.chat.id, `❌ ${(err as Error).message}`);
+    }
   });
 
   // /analyze <url>
