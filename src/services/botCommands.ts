@@ -7,7 +7,7 @@ import { saveAnalysis, saveDiscoveredEntities, ingestAnalysisForDigest, listAnal
 import { analyzeUrl, LinkAnalysis } from './linkAnalyzer';
 import { recordSourceSignal, listSourceReputations, setSourceStatus, SourceStatus } from '../db/sourceReputationRepo';
 import { searchWeb }                    from './webSearch';
-import { handleIntentQuery, isIntentQuery, explainTopic, chatReply, clearHistory } from './intentService';
+import { handleIntentQuery, isIntentQuery, explainTopic, chatReply, clearHistory, addToHistory } from './intentService';
 import { runPushScan }                  from './pushMonitor';
 import { discoverFeed, extractKeywords } from './sourceDiscovery';
 import { SOURCE_GOVERNANCE } from './sourceGovernance';
@@ -547,8 +547,10 @@ export function registerBotCommands(): void {
     if (isIntentQuery(text)) {
       const thinking = await reply(bot, msg.chat.id, '🤔 Ищу...').catch(() => undefined);
       try {
+        addToHistory(msg.chat.id, 'user', text);
         const response = await handleIntentQuery(text);
         const safeResponse = response?.trim() || '🤷 Ничего не нашёл. Попробуй /search или задай вопрос иначе.';
+        if (safeResponse) addToHistory(msg.chat.id, 'assistant', safeResponse);
         const sendSafe = async (t: string) => {
           await bot.sendMessage(msg.chat.id, t, { parse_mode: 'Markdown' }).catch(async () =>
             bot.sendMessage(msg.chat.id, t).catch(() => {}),

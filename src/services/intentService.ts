@@ -90,6 +90,8 @@ export function clearHistory(chatId: string | number): void {
   chatHistories.delete(chatId);
 }
 
+export { addToHistory };
+
 // ─── Step 1: classify intent ──────────────────────────────────────────────────
 
 const CLASSIFY_SYSTEM = `Classify the user's message into an intent and return ONLY valid JSON.
