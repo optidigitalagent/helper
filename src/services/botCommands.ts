@@ -14,12 +14,51 @@ import { SOURCE_GOVERNANCE } from './sourceGovernance';
 import { logger, throttledError } from '../utils/logger';
 import { config }            from '../config';
 import { Category }          from '../types';
+import OpenAI                from 'openai';
+import axios                 from 'axios';
+import { Readable }          from 'stream';
 
 // ─── Auth ─────────────────────────────────────────────────────────────────────
 // Only the configured chat ID can issue commands
 
 function isAuthorized(chatId: number): boolean {
   return String(chatId) === String(config.telegram.chatId);
+}
+
+// ─── Voice mode state ─────────────────────────────────────────────────────────
+// Per-chat flag: if true, bot sends voice reply in addition to text
+
+const voiceModeChats = new Set<number>();
+
+// ─── Voice transcription ──────────────────────────────────────────────────────
+
+async function transcribeVoice(fileUrl: string): Promise<string> {
+  const openai = new OpenAI({ apiKey: config.openai.apiKey });
+  const { data: audioBuffer } = await axios.get<Buffer>(fileUrl, { responseType: 'arraybuffer' });
+  const readable = Readable.from(Buffer.from(audioBuffer)) as NodeJS.ReadableStream & { name?: string };
+  readable.name = 'voice.ogg';
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const transcription = await openai.audio.transcriptions.create({
+    file: readable as any,
+    model: 'whisper-1',
+    language: 'ru',
+  });
+  return transcription.text.trim();
+}
+
+// ─── Text-to-speech ───────────────────────────────────────────────────────────
+
+async function speakText(bot: TelegramBot, chatId: number, text: string): Promise<void> {
+  const openai = new OpenAI({ apiKey: config.openai.apiKey });
+  // Strip markdown symbols so TTS sounds natural
+  const clean = text.replace(/[*_`#>~[\]()]/g, '').slice(0, 4096);
+  const mp3 = await openai.audio.speech.create({
+    model: 'tts-1',
+    voice: 'nova',
+    input: clean,
+  });
+  const buffer = Buffer.from(await mp3.arrayBuffer());
+  await bot.sendVoice(chatId, buffer, {}, { filename: 'reply.mp3', contentType: 'audio/mpeg' });
 }
 
 function reply(bot: TelegramBot, chatId: number, text: string): Promise<TelegramBot.Message> {
@@ -528,10 +567,106 @@ export function registerBotCommands(): void {
     await handleAdd(bot, msg.chat.id, url, note);
   });
 
+  // Dedicated voice handler — more reliable than checking msg.voice inside 'message'
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  (bot as any).on('voice', async (msg: TelegramBot.Message) => {
+    if (!isAuthorized(msg.chat.id)) return;
+    const fileId = msg.voice?.file_id;
+    if (!fileId) return;
+    logger.info(`[botCommands] voice message received, file_id=${fileId}`);
+    const thinking = await reply(bot, msg.chat.id, '🎙 Распознаю голос...').catch(() => undefined);
+    let transcribed: string;
+    try {
+      const fileInfo = await bot.getFile(fileId);
+      const fileUrl  = `https://api.telegram.org/file/bot${config.telegram.botToken}/${fileInfo.file_path}`;
+      transcribed = await transcribeVoice(fileUrl);
+      if (!transcribed) {
+        await bot.editMessageText('🤷 Не смог распознать голосовое сообщение.', {
+          chat_id: msg.chat.id, message_id: thinking?.message_id ?? 0,
+        }).catch(() => reply(bot, msg.chat.id, '🤷 Не смог распознать.'));
+        return;
+      }
+      logger.info(`[botCommands] voice transcribed: "${transcribed.slice(0, 80)}"`);
+      if (thinking) {
+        await bot.editMessageText(`🎙 _"${transcribed}"_`, {
+          chat_id: msg.chat.id, message_id: thinking.message_id, parse_mode: 'Markdown',
+        }).catch(() => {});
+      }
+    } catch (err) {
+      await bot.sendMessage(msg.chat.id, `❌ Ошибка распознавания: ${(err as Error).message.slice(0, 200)}`).catch(() => {});
+      return;
+    }
+    const sendVoiceReply = async (t: string) => {
+      await bot.sendMessage(msg.chat.id, t, { parse_mode: 'Markdown' }).catch(async () =>
+        bot.sendMessage(msg.chat.id, t).catch(() => {}),
+      );
+      await speakText(bot, msg.chat.id, t).catch((e) =>
+        logger.warn('[botCommands] TTS error:', (e as Error).message.slice(0, 100)),
+      );
+    };
+    const urlMatchV = transcribed.match(URL_REGEX);
+    if (urlMatchV) {
+      await handleAdd(bot, msg.chat.id, urlMatchV[0], transcribed.replace(urlMatchV[0], '').trim());
+      return;
+    }
+    if (isIntentQuery(transcribed)) {
+      addToHistory(msg.chat.id, 'user', transcribed);
+      const resp = await handleIntentQuery(transcribed).catch(() => '');
+      const safe = resp?.trim() || '🤷 Ничего не нашёл.';
+      if (safe) addToHistory(msg.chat.id, 'assistant', safe);
+      await sendVoiceReply(safe);
+      return;
+    }
+    const chatResp = await chatReply(transcribed, msg.chat.id).catch(() => '');
+    await sendVoiceReply(chatResp?.trim() || '🤷 Не смог ответить.');
+  });
+
   // Plain message: URL → auto-add, intent text → pull mode, other → chat
   bot.on('message', async (msg) => {
     if (!isAuthorized(msg.chat.id)) return;
+
+    // Skip voice — handled by dedicated 'voice' event above
+    if (msg.voice) return;
+
+    // audio/video_note — transcribe same way
+    if (msg.audio || msg.video_note) {
+      const fileId = msg.audio?.file_id ?? msg.video_note?.file_id ?? '';
+      const thinking = await reply(bot, msg.chat.id, '🎙 Распознаю...').catch(() => undefined);
+      let transcribed: string;
+      try {
+        const fileInfo = await bot.getFile(fileId);
+        const fileUrl  = `https://api.telegram.org/file/bot${config.telegram.botToken}/${fileInfo.file_path}`;
+        transcribed = await transcribeVoice(fileUrl);
+        if (!transcribed) {
+          await bot.editMessageText('🤷 Не смог распознать.', {
+            chat_id: msg.chat.id, message_id: thinking?.message_id ?? 0,
+          }).catch(() => reply(bot, msg.chat.id, '🤷 Не смог распознать.'));
+          return;
+        }
+        if (thinking) {
+          await bot.editMessageText(`🎙 _"${transcribed}"_`, {
+            chat_id: msg.chat.id, message_id: thinking.message_id, parse_mode: 'Markdown',
+          }).catch(() => {});
+        }
+      } catch (err) {
+        await bot.sendMessage(msg.chat.id, `❌ Ошибка распознавания: ${(err as Error).message.slice(0, 200)}`).catch(() => {});
+        return;
+      }
+      if (isIntentQuery(transcribed)) {
+        addToHistory(msg.chat.id, 'user', transcribed);
+        const resp = await handleIntentQuery(transcribed).catch(() => '');
+        const safe = resp?.trim() || '🤷 Ничего не нашёл.';
+        if (safe) addToHistory(msg.chat.id, 'assistant', safe);
+        await bot.sendMessage(msg.chat.id, safe, { parse_mode: 'Markdown' }).catch(() => {});
+      } else {
+        const chatResp2 = await chatReply(transcribed, msg.chat.id).catch(() => '');
+        await bot.sendMessage(msg.chat.id, chatResp2?.trim() || '🤷 Не смог ответить.', { parse_mode: 'Markdown' }).catch(() => {});
+      }
+      return;
+    }
+
     const text = msg.text ?? '';
+    if (!text) return; // ignore stickers, photos, and other non-text media
     if (text.startsWith('/')) return;
     logger.info(`[botCommands] message received: "${text.slice(0, 60)}" isIntent=${isIntentQuery(text)}`);
 
@@ -574,9 +709,9 @@ export function registerBotCommands(): void {
     try {
       const response = await chatReply(text, msg.chat.id);
       const safeResponse = response?.trim() || '🤷 Не смог ответить. Попробуй ещё раз.';
-      const sendSafe = async (text: string) => {
-        await bot.sendMessage(msg.chat.id, text, { parse_mode: 'Markdown' }).catch(async () =>
-          bot.sendMessage(msg.chat.id, text).catch(() => {}),
+      const sendSafe = async (t: string) => {
+        await bot.sendMessage(msg.chat.id, t, { parse_mode: 'Markdown' }).catch(async () =>
+          bot.sendMessage(msg.chat.id, t).catch(() => {}),
         );
       };
       if (thinking) {
@@ -586,8 +721,28 @@ export function registerBotCommands(): void {
       } else {
         await sendSafe(safeResponse);
       }
+      if (voiceModeChats.has(msg.chat.id)) {
+        await speakText(bot, msg.chat.id, safeResponse).catch((e) =>
+          logger.warn('[botCommands] TTS error:', (e as Error).message.slice(0, 100)),
+        );
+      }
     } catch (err) {
       await bot.sendMessage(msg.chat.id, `❌ ${(err as Error).message.slice(0, 200)}`).catch(() => {});
+    }
+  });
+
+  // /voice — toggle voice replies for text messages
+  bot.onText(/^\/voice(@\w+)?(?:\s+(on|off))?$/, async (msg, match) => {
+    if (!isAuthorized(msg.chat.id)) return;
+    const arg = match?.[2];
+    const wasOn = voiceModeChats.has(msg.chat.id);
+    const turnOn = arg === 'on' || (!arg && !wasOn);
+    if (turnOn) {
+      voiceModeChats.add(msg.chat.id);
+      await reply(bot, msg.chat.id, '🔊 Голосовые ответы *включены*. `/voice off` — выключить.');
+    } else {
+      voiceModeChats.delete(msg.chat.id);
+      await reply(bot, msg.chat.id, '🔇 Голосовые ответы *выключены*. `/voice on` — включить.');
     }
   });
 
