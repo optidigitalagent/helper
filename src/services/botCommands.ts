@@ -7,7 +7,7 @@ import { saveAnalysis, saveDiscoveredEntities, ingestAnalysisForDigest, listAnal
 import { analyzeUrl, LinkAnalysis } from './linkAnalyzer';
 import { recordSourceSignal, listSourceReputations, setSourceStatus, SourceStatus } from '../db/sourceReputationRepo';
 import { searchWeb }                    from './webSearch';
-import { handleIntentQuery, isIntentQuery, explainTopic, chatReply } from './intentService';
+import { handleIntentQuery, isIntentQuery, explainTopic, chatReply, clearHistory } from './intentService';
 import { runPushScan }                  from './pushMonitor';
 import { discoverFeed, extractKeywords } from './sourceDiscovery';
 import { SOURCE_GOVERNANCE } from './sourceGovernance';
@@ -451,6 +451,13 @@ async function handleHelp(bot: TelegramBot, chatId: number): Promise<void> {
 export function registerBotCommands(): void {
   const bot = getBot();
 
+  // /clear — reset conversation history
+  bot.onText(/^\/clear(@\w+)?$/, async (msg) => {
+    if (!isAuthorized(msg.chat.id)) return;
+    clearHistory(msg.chat.id);
+    await reply(bot, msg.chat.id, '🗑 История чата очищена');
+  });
+
   // /debug — test LLM connection
   bot.onText(/^\/debug(@\w+)?$/, async (msg) => {
     if (!isAuthorized(msg.chat.id)) return;
@@ -563,7 +570,7 @@ export function registerBotCommands(): void {
     // CHAT MODE: any other text — simple direct LLM reply
     const thinking = await reply(bot, msg.chat.id, '💬').catch(() => undefined);
     try {
-      const response = await chatReply(text);
+      const response = await chatReply(text, msg.chat.id);
       const safeResponse = response?.trim() || '🤷 Не смог ответить. Попробуй ещё раз.';
       const sendSafe = async (text: string) => {
         await bot.sendMessage(msg.chat.id, text, { parse_mode: 'Markdown' }).catch(async () =>

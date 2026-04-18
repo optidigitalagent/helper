@@ -46,12 +46,18 @@ const LLM_PROVIDER = (process.env.LLM_PROVIDER ?? 'openai') as 'openai' | 'claud
 const OPENAI_MODEL  = process.env.OPENAI_MODEL  ?? 'gpt-4o-mini';
 const CLAUDE_MODEL  = process.env.CLAUDE_MODEL  ?? 'claude-3-5-haiku-20241022';
 
+interface ChatMessage { role: 'user' | 'assistant'; content: string; }
+
 async function llmCall(system: string, user: string, maxTokens = 800): Promise<string> {
+  return llmCallWithHistory(system, [{ role: 'user', content: user }], maxTokens);
+}
+
+async function llmCallWithHistory(system: string, messages: ChatMessage[], maxTokens = 800): Promise<string> {
   if (LLM_PROVIDER === 'claude') {
     const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
     const res    = await client.messages.create({
       model: CLAUDE_MODEL, max_tokens: maxTokens,
-      system, messages: [{ role: 'user', content: user }],
+      system, messages,
     });
     const block = res.content[0];
     return block.type === 'text' ? block.text : '';
@@ -59,9 +65,29 @@ async function llmCall(system: string, user: string, maxTokens = 800): Promise<s
   const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
   const res    = await client.chat.completions.create({
     model: OPENAI_MODEL, temperature: 0.1, max_tokens: maxTokens,
-    messages: [{ role: 'system', content: system }, { role: 'user', content: user }],
+    messages: [{ role: 'system', content: system }, ...messages],
   });
   return res.choices[0]?.message?.content ?? '';
+}
+
+// ─── Per-chat conversation history ───────────────────────────────────────────
+
+const MAX_HISTORY = 10; // сообщений (user+assistant пары = 5 обменов)
+const chatHistories = new Map<string | number, ChatMessage[]>();
+
+function getHistory(chatId: string | number): ChatMessage[] {
+  return chatHistories.get(chatId) ?? [];
+}
+
+function addToHistory(chatId: string | number, role: 'user' | 'assistant', content: string): void {
+  const history = chatHistories.get(chatId) ?? [];
+  history.push({ role, content });
+  if (history.length > MAX_HISTORY) history.splice(0, history.length - MAX_HISTORY);
+  chatHistories.set(chatId, history);
+}
+
+export function clearHistory(chatId: string | number): void {
+  chatHistories.delete(chatId);
 }
 
 // ─── Step 1: classify intent ──────────────────────────────────────────────────
@@ -200,13 +226,18 @@ export async function handleIntentQuery(userText: string): Promise<string> {
   return formatResponse(userText, cls, content);
 }
 
-/** Simple conversational reply — no search, no DB, just LLM */
-export async function chatReply(text: string): Promise<string> {
+/** Simple conversational reply with per-chat memory */
+export async function chatReply(text: string, chatId: string | number = 'default'): Promise<string> {
   const system = `Ты — умный помощник в Telegram. Отвечай коротко и по делу на русском языке.
 Если вопрос про технологии, AI, бизнес, крипту — дай полезный ответ из своих знаний.
 Если простое приветствие или болтовня — ответь кратко и дружелюбно.
 Без вступлений, без воды. Telegram Markdown.`;
-  return llmCall(system, text, 400);
+
+  addToHistory(chatId, 'user', text);
+  const history = getHistory(chatId);
+  const response = await llmCallWithHistory(system, history, 400);
+  if (response) addToHistory(chatId, 'assistant', response);
+  return response;
 }
 
 /** Explain any topic from model knowledge — used as search fallback */
