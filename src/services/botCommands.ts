@@ -451,6 +451,26 @@ async function handleHelp(bot: TelegramBot, chatId: number): Promise<void> {
 export function registerBotCommands(): void {
   const bot = getBot();
 
+  // /debug — test LLM connection
+  bot.onText(/^\/debug(@\w+)?$/, async (msg) => {
+    if (!isAuthorized(msg.chat.id)) return;
+    await bot.sendMessage(msg.chat.id, '🔧 Тестирую подключение...').catch(() => {});
+    try {
+      const response = await chatReply('скажи "работает"');
+      await bot.sendMessage(msg.chat.id, `✅ LLM ответил: ${response.slice(0, 200)}`).catch(() => {});
+    } catch (err) {
+      await bot.sendMessage(msg.chat.id, `❌ LLM ошибка: ${(err as Error).message.slice(0, 300)}`).catch(() => {});
+    }
+  });
+
+  // /id — debug: show current chat ID and auth status
+  bot.onText(/^\/id(@\w+)?$/, async (msg) => {
+    const authorized = isAuthorized(msg.chat.id);
+    await bot.sendMessage(msg.chat.id,
+      `Chat ID: \`${msg.chat.id}\`\nUser ID: \`${msg.from?.id ?? 'unknown'}\`\nAuthorized: ${authorized ? '✅' : '❌'}\nConfigured CHAT_ID: \`${config.telegram.chatId}\``
+    , { parse_mode: 'Markdown' }).catch(() => {});
+  });
+
   bot.onText(/^\/brief(@\w+)?$/, async (msg) => {
     if (!isAuthorized(msg.chat.id)) return;
     await handleBrief(bot, msg.chat.id);
@@ -501,11 +521,12 @@ export function registerBotCommands(): void {
     await handleAdd(bot, msg.chat.id, url, note);
   });
 
-  // Plain message: URL → auto-add, intent text → pull mode, other → ignore
+  // Plain message: URL → auto-add, intent text → pull mode, other → chat
   bot.on('message', async (msg) => {
     if (!isAuthorized(msg.chat.id)) return;
     const text = msg.text ?? '';
     if (text.startsWith('/')) return;
+    logger.info(`[botCommands] message received: "${text.slice(0, 60)}" isIntent=${isIntentQuery(text)}`);
 
     const urlMatch = text.match(URL_REGEX);
     if (urlMatch) {
@@ -520,14 +541,18 @@ export function registerBotCommands(): void {
       const thinking = await reply(bot, msg.chat.id, '🤔 Ищу...').catch(() => undefined);
       try {
         const response = await handleIntentQuery(text);
-        if (thinking) {
-          await bot.editMessageText(response, {
-            chat_id: msg.chat.id, message_id: thinking.message_id, parse_mode: 'Markdown',
-          }).catch(async () => bot.sendMessage(msg.chat.id, response).catch(() => {}));
-        } else {
-          await bot.sendMessage(msg.chat.id, response, { parse_mode: 'Markdown' }).catch(async () =>
-            bot.sendMessage(msg.chat.id, response).catch(() => {}),
+        const safeResponse = response?.trim() || '🤷 Ничего не нашёл. Попробуй /search или задай вопрос иначе.';
+        const sendSafe = async (t: string) => {
+          await bot.sendMessage(msg.chat.id, t, { parse_mode: 'Markdown' }).catch(async () =>
+            bot.sendMessage(msg.chat.id, t).catch(() => {}),
           );
+        };
+        if (thinking) {
+          await bot.editMessageText(safeResponse, {
+            chat_id: msg.chat.id, message_id: thinking.message_id, parse_mode: 'Markdown',
+          }).catch(async () => sendSafe(safeResponse));
+        } else {
+          await sendSafe(safeResponse);
         }
       } catch (err) {
         await bot.sendMessage(msg.chat.id, `❌ ${(err as Error).message.slice(0, 200)}`).catch(() => {});
@@ -539,14 +564,18 @@ export function registerBotCommands(): void {
     const thinking = await reply(bot, msg.chat.id, '💬').catch(() => undefined);
     try {
       const response = await chatReply(text);
-      if (thinking) {
-        await bot.editMessageText(response, {
-          chat_id: msg.chat.id, message_id: thinking.message_id, parse_mode: 'Markdown',
-        }).catch(async () => bot.sendMessage(msg.chat.id, response).catch(() => {}));
-      } else {
-        await bot.sendMessage(msg.chat.id, response, { parse_mode: 'Markdown' }).catch(async () =>
-          bot.sendMessage(msg.chat.id, response).catch(() => {}),
+      const safeResponse = response?.trim() || '🤷 Не смог ответить. Попробуй ещё раз.';
+      const sendSafe = async (text: string) => {
+        await bot.sendMessage(msg.chat.id, text, { parse_mode: 'Markdown' }).catch(async () =>
+          bot.sendMessage(msg.chat.id, text).catch(() => {}),
         );
+      };
+      if (thinking) {
+        await bot.editMessageText(safeResponse, {
+          chat_id: msg.chat.id, message_id: thinking.message_id, parse_mode: 'Markdown',
+        }).catch(async () => sendSafe(safeResponse));
+      } else {
+        await sendSafe(safeResponse);
       }
     } catch (err) {
       await bot.sendMessage(msg.chat.id, `❌ ${(err as Error).message.slice(0, 200)}`).catch(() => {});

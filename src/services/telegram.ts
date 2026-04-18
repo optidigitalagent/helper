@@ -8,49 +8,38 @@ let _bot: TelegramBot | null = null;
 
 export function getBot(): TelegramBot {
   if (!_bot) {
-    // Create bot WITHOUT polling — we start it manually in startBotPolling()
-    _bot = new TelegramBot(config.telegram.botToken, { polling: false });
+    _bot = new TelegramBot(config.telegram.botToken, {
+      polling: {
+        autoStart: false,
+        interval:  2000,          // 2s gap between retries on error (e.g. 409)
+        params:    { timeout: 30 }, // long-poll: wait up to 30s for updates
+      },
+    });
   }
   return _bot;
 }
 
-/** Start polling. Auto-recovers from 409 by waiting for old session to expire. */
+/** Start polling. On 409 conflict the library retries every 2s until the old session expires. */
 export async function startBotPolling(): Promise<void> {
   const bot = getBot();
 
-  async function clearAndStart() {
-    try { await (bot as any).deleteWebhook({ drop_pending_updates: true }); } catch { /* ignore */ }
-    await bot.startPolling({ restart: false });
-  }
-
-  // Register handler BEFORE starting so no 409 is missed.
-  let restarting = false;
-  let attempt = 0;
-
-  bot.on('polling_error', async (err) => {
+  let last409 = 0;
+  bot.on('polling_error', (err) => {
     const msg = (err as Error).message ?? String(err);
     if (msg.includes('409')) {
-      if (restarting) return;
-      restarting = true;
-      attempt++;
-      const delay = Math.min(30_000 * attempt, 120_000); // 30s, 60s, 90s, max 120s
-      logger.warn(`[telegram] 409 conflict — attempt ${attempt}, waiting ${delay / 1000}s...`);
-      try { await bot.stopPolling(); } catch { /* ignore */ }
-      await new Promise((r) => setTimeout(r, delay));
-      try {
-        await clearAndStart();
-        logger.info('[telegram] polling restarted after 409 recovery');
-        attempt = 0;
-      } catch (e) {
-        logger.error('[telegram] failed to restart after 409:', (e as Error).message);
+      // Another instance is still running — library retries automatically every 2s.
+      // Log at most once per 30s to avoid spam.
+      const now = Date.now();
+      if (now - last409 > 30_000) {
+        logger.warn('[telegram] 409 conflict — waiting for other instance to release polling...');
+        last409 = now;
       }
-      restarting = false;
     } else {
-      logger.warn('[telegram] polling_error:', msg.slice(0, 120));
+      logger.warn('[telegram] polling error:', msg.slice(0, 120));
     }
   });
 
-  await clearAndStart();
+  await bot.startPolling();
   logger.info('[telegram] bot polling started');
 }
 
