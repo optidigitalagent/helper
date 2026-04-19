@@ -721,11 +721,9 @@ export function registerBotCommands(): void {
       } else {
         await sendSafe(safeResponse);
       }
-      if (voiceModeChats.has(msg.chat.id)) {
-        await speakText(bot, msg.chat.id, safeResponse).catch((e) =>
-          logger.warn('[botCommands] TTS error:', (e as Error).message.slice(0, 100)),
-        );
-      }
+      await speakText(bot, msg.chat.id, safeResponse).catch((e) =>
+        logger.warn('[botCommands] TTS error:', (e as Error).message.slice(0, 100)),
+      );
     } catch (err) {
       await bot.sendMessage(msg.chat.id, `❌ ${(err as Error).message.slice(0, 200)}`).catch(() => {});
     }
