@@ -13,7 +13,7 @@ import { listPodcastInsights, PodcastInsight } from '../db/knowledgeRepo';
 const LLM_PROVIDER   = (process.env.LLM_PROVIDER ?? 'openai') as 'openai' | 'claude';
 const OPENAI_MODEL   = process.env.OPENAI_MODEL   ?? 'gpt-4o-mini';
 const CLAUDE_MODEL   = process.env.CLAUDE_MODEL   ?? 'claude-3-5-haiku-20241022';
-const MAX_TOKENS     = 4000;
+const MAX_TOKENS     = 5500;
 const TEMPERATURE    = 0.2;
 
 // Per-category item cap sent to LLM
@@ -90,6 +90,16 @@ const SYSTEM_PROMPT = `Ты — personal intelligence assistant. Каждое у
 Пример (не копируй, придумай своё):
 "Рынок не ждёт пока ты додумаешь — запусти MVP за 48 часов и посмотри что сломается."
 "Лучший способ понять тренд — построить что-то маленькое на его вершине и посмотреть что упадёт."
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+БЛОК 5 — ФИЛОСОФИЯ
+
+Цитата или мысль от великих предпринимателей, философов, писателей — о бизнесе, жизни, деньгах, людях, решениях.
+НЕ про AI, крипту или технологии. Только вечные темы.
+Авторы: Мангер, Баффет, Сенека, Марк Аврелий, Безос, Маск, Грэм, Далио, Талеб, Черчилль и подобные.
+Формат: цитата в кавычках, затем с новой строки — имя автора курсивом.
+1–3 предложения. Только если цитата реально сильная и точная.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -189,8 +199,8 @@ function buildUserPrompt(grouped: Map<Category, RankedItem[]>, podcastInsights: 
     sections.join('\n\n---\n\n') +
     (insightsBlock ? `\n\n---\n\n${insightsBlock}` : '') +
     `\n\n---\n\n` +
-    `Напиши строго 4 сообщения. Разделяй точно по маркерам:\n` +
-    `===MSG1===\n[блок 1 — рынок]\n===MSG2===\n[блок 2 — технологии]\n===MSG3===\n[блок 3 — инсайды]\n===MSG4===\n[блок 4 — направление дня, 1-2 предложения]\n===END===`
+    `Напиши строго 5 сообщений. Разделяй точно по маркерам:\n` +
+    `===MSG1===\n[блок 1 — рынок]\n===MSG2===\n[блок 2 — технологии]\n===MSG3===\n[блок 3 — инсайды]\n===MSG4===\n[блок 4 — направление дня, 1-2 предложения]\n===MSG5===\n[ТОЛЬКО цитата + имя автора, максимум 3 строки]\n===END===`
   );
 }
 
@@ -236,6 +246,7 @@ const MSG_HEADERS = [
   { marker: '===MSG2===', label: '🤖 *ТЕХНОЛОГИИ И ИНСТРУМЕНТЫ*' },
   { marker: '===MSG3===', label: '🔍 *ИНСАЙДЫ И DEEP KNOWLEDGE*' },
   { marker: '===MSG4===', label: '🎯 *НАПРАВЛЕНИЕ ДНЯ*' },
+  { marker: '===MSG5===', label: '💡 *ФИЛОСОФИЯ*' },
 ];
 
 function parseMessages(raw: string): string[] {
