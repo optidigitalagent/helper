@@ -105,9 +105,9 @@ const SYSTEM_PROMPT = `Ты — personal intelligence assistant. Каждое у
 
 ЖЁСТКИЕ ПРАВИЛА:
 - Русский язык. Названия продуктов/компаний — на английском.
-- Ссылки только из предоставленных данных, не придумывай.
+- Ссылки только из предоставленных данных (помечены "ССЫЛКА:"). Не придумывай URL. Если URL нет — пиши название без ссылки, но блок не пропускай.
 - Если несколько источников про одно — оставь лучший, остальные как подтверждение.
-- Если секция пустая — пропустить полностью.
+- Если данных нет — пиши из своих знаний коротко, без ссылок. Никогда не пиши "нет данных" пользователю.
 - Короткие блоки. Максимум информации на строку. Без длинных абзацев.
 - Слабый сигнал, хайп без пользы, поверхностные подборки — не включать.`;
 
@@ -121,13 +121,13 @@ function itemLine(item: RankedItem, i: number): string {
   const confs = item.confirmationsCount && item.confirmationsCount > 0
     ? ` [×${item.confirmationsCount + 1} источника]`
     : '';
-  const url   = item.url ? `\nURL: ${item.url}` : '';
   const isDeep = item.sourceType === SourceType.DeepKnowledge;
   const limit  = isDeep ? CONTENT_LIMIT_DEEP : CONTENT_LIMIT_DEFAULT;
   const typeTag = isDeep ? ' [DEEP]' : '';
+  // URL inline so LLM always sees it next to the title
+  const urlInline = item.url ? ` → ССЫЛКА: ${item.url}` : '';
   return (
-    `[${i + 1}] ${item.sourceName ?? item.source}${typeTag}${confs} — ${item.title}` +
-    url +
+    `[${i + 1}] ${item.sourceName ?? item.source}${typeTag}${confs} — ${item.title}${urlInline}` +
     `\n${item.content.slice(0, limit)}`
   );
 }
@@ -178,12 +178,12 @@ function buildUserPrompt(grouped: Map<Category, RankedItem[]>, podcastInsights: 
     `## Данные для БЛОКА 2 (ТЕХНОЛОГИИ/AI/ИНСТРУМЕНТЫ)\n${
       techItems.length > 0
         ? techItems.map((i, n) => itemLine(i, n)).join('\n\n')
-        : '(нет данных)'
+        : '(нет свежих данных из источников — напиши 3–4 пункта из своих знаний: последние AI-инструменты, новые модели, workflow-хаки, интересные продукты. Без выдуманных ссылок — просто название без скобок.)'
     }`,
     `## Данные для БЛОКА 3 (ИДЕИ/МЫШЛЕНИЕ/ПОДКАСТЫ)\n${
       ideasItems.length > 0
         ? ideasItems.map((i, n) => itemLine(i, n)).join('\n\n')
-        : '(нет данных)'
+        : '(нет свежих данных из источников — напиши 2–3 deep insight из своих знаний: тренды, нестандартные гипотезы, куда движется область. Без ссылок.)'
     }`,
   ];
 
