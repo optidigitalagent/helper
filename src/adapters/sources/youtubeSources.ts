@@ -109,4 +109,60 @@ export const youtubeSources: SourceAdapter[] = [
     category:  Category.Thinking,
     tags:      ['product', 'growth', 'founders', 'strategy'],
   }),
+
+  // ── Русскоязычные: бизнес, философия, миллиардеры ─────────────────────────
+
+  // Оскар Хартманн — интервью с миллиардерами, бизнес-философия
+  createYoutubeAdapter({
+    id:        'yt_hartmann',
+    name:      'Оскар Хартманн',
+    channelId: 'UCFJnZHIusOlHr-pbYVHmr-A',
+    category:  Category.Thinking,
+    tags:      ['ru', 'interview', 'billionaires', 'philosophy', 'business'],
+  }),
+
+  // BigMoney (Евгений Черняк) — интервью с предпринимателями, бизнес-истории
+  createYoutubeAdapter({
+    id:        'yt_bigmoney',
+    name:      'BigMoney (Евгений Черняк)',
+    channelId: 'UCBXknSneBtw2iA8BQsXqiTw',
+    category:  Category.Thinking,
+    tags:      ['ru', 'interview', 'entrepreneurs', 'business', 'mindset'],
+  }),
+
+  // Бизнес-Секреты (Тиньков) — интервью с основателями компаний
+  createYoutubeAdapter({
+    id:        'yt_biznes_sekrety',
+    name:      'Бизнес-Секреты',
+    channelId: 'UC_ErLqdnmXGMH-pccUQjwyA',
+    category:  Category.Thinking,
+    tags:      ['ru', 'interview', 'founders', 'business-secrets'],
+  }),
+
+  // Портнягин (Трансформатор) — бизнес, предпринимательство
+  createYoutubeAdapter({
+    id:        'yt_portnyagin',
+    name:      'Портнягин',
+    channelId: 'UCeNpzcxM-hUhnabwC7oZeYw',
+    category:  Category.Thinking,
+    tags:      ['ru', 'business', 'entrepreneur', 'mindset'],
+  }),
+
+  // Forbes Russia — интервью с богатыми людьми, бизнес-истории
+  createYoutubeAdapter({
+    id:        'yt_forbes_russia',
+    name:      'Forbes Russia',
+    channelId: 'UCr2LSro_9yZvng8HR2eDExA',
+    category:  Category.Thinking,
+    tags:      ['ru', 'billionaires', 'business', 'interview', 'wealth'],
+  }),
+
+  // Саидмурод Давлатов — философия успеха, бизнес, мотивация
+  createYoutubeAdapter({
+    id:        'yt_davlatov',
+    name:      'Саидмурод Давлатов',
+    channelId: 'UCVtFh_62yrW-vj95T0TvYiw',
+    category:  Category.Thinking,
+    tags:      ['ru', 'philosophy', 'success', 'business', 'wealth'],
+  }),
 ];
