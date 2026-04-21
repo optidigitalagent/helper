@@ -70,4 +70,58 @@ export const podcastSources: SourceAdapter[] = [
     category: Category.Podcast,
     tags:     ['podcast', 'vc', 'tech-strategy', 'startups'],
   }),
+
+  // Tim Ferriss Show — world-class performers, routines, mental models
+  createRssAdapter({
+    id:       'rss_tim_ferriss',
+    name:     'The Tim Ferriss Show',
+    feedUrl:  'https://rss.art19.com/tim-ferriss-show',
+    category: Category.Podcast,
+    tags:     ['podcast', 'philosophy', 'habits', 'billionaires', 'performance'],
+  }),
+
+  // Acquired — deep dives on greatest companies (Amazon, Apple, Berkshire, LVMH)
+  createRssAdapter({
+    id:       'rss_acquired',
+    name:     'Acquired',
+    feedUrl:  'https://acquired.fm/rss',
+    category: Category.Podcast,
+    tags:     ['podcast', 'business-history', 'strategy', 'founders'],
+  }),
+
+  // Founders — David Senra reads biographies of great entrepreneurs
+  createRssAdapter({
+    id:       'rss_founders_pod',
+    name:     'Founders Podcast',
+    feedUrl:  'https://feeds.simplecast.com/dHoohVNH',
+    category: Category.Podcast,
+    tags:     ['podcast', 'biography', 'philosophy', 'business-history', 'wealth'],
+  }),
+
+  // Diary of a CEO — Steven Bartlett, raw conversations with top founders
+  createRssAdapter({
+    id:       'rss_diary_of_ceo',
+    name:     'Diary of a CEO',
+    feedUrl:  'https://feeds.megaphone.fm/diaryofaceo',
+    category: Category.Podcast,
+    tags:     ['podcast', 'founders', 'mindset', 'wealth', 'life'],
+  }),
+
+  // Naval — Naval Ravikant on wealth, happiness, philosophy
+  createRssAdapter({
+    id:       'rss_naval',
+    name:     'Naval',
+    feedUrl:  'https://nav.al/podcast/rss',
+    category: Category.Podcast,
+    tags:     ['podcast', 'philosophy', 'wealth', 'happiness', 'naval'],
+  }),
+
+  // Masters of Scale — Reid Hoffman, how iconic companies grew
+  createRssAdapter({
+    id:       'rss_masters_of_scale',
+    name:     'Masters of Scale',
+    feedUrl:  'https://feeds.simplecast.com/tDBwK1gV',
+    category: Category.Podcast,
+    tags:     ['podcast', 'growth', 'founders', 'strategy', 'business'],
+  }),
 ];

@@ -19,16 +19,22 @@ export function getBot(): TelegramBot {
   return _bot;
 }
 
-/** Start polling. On 409 conflict the library retries every 2s until the old session expires. */
+/** Start polling. Clears any existing webhook/session first to avoid 409 conflicts. */
 export async function startBotPolling(): Promise<void> {
   const bot = getBot();
+
+  // Force-release any existing polling session or webhook on Telegram's side
+  try {
+    await bot.deleteWebHook();
+    logger.info('[telegram] webhook cleared, starting polling...');
+  } catch (err) {
+    logger.warn('[telegram] deleteWebhook failed (non-fatal):', (err as Error).message?.slice(0, 80));
+  }
 
   let last409 = 0;
   bot.on('polling_error', (err) => {
     const msg = (err as Error).message ?? String(err);
     if (msg.includes('409')) {
-      // Another instance is still running — library retries automatically every 2s.
-      // Log at most once per 30s to avoid spam.
       const now = Date.now();
       if (now - last409 > 30_000) {
         logger.warn('[telegram] 409 conflict — waiting for other instance to release polling...');

@@ -1,4 +1,4 @@
-import { getUnsentItems }                    from '../db/itemsRepo';
+import { getUnsentItems, markSent }           from '../db/itemsRepo';
 import { rankingService, refreshInterestCache } from './ranking';
 import { sendMessage }                         from './telegram';
 import { logger }                              from '../utils/logger';
@@ -72,6 +72,7 @@ export async function runPushScan(): Promise<void> {
     pushedIds.add(item.id);
     try {
       await sendMessage(formatPushAlert(item));
+      await markSent([item.id]);
       logger.info(`[push] sent: "${item.title.slice(0, 60)}" score=${item.score}`);
     } catch (err) {
       logger.warn(`[push] send failed: ${(err as Error).message}`);

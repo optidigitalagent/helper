@@ -19,5 +19,6 @@ services:
     env_file: .env
     environment:
       RSSHUB_BASE_URL: http://rsshub:1200
+      TZ: Europe/Moscow
     ports:
       - "3000:3000"

@@ -3,7 +3,7 @@ import { loadUserAdapters } from '../adapters/userSources';
 import { normalizer }     from './normalizer';
 import { rankingService, SOURCE_WEIGHTS, refreshInterestCache } from './ranking';
 import { clusterItems }  from './clustering';
-import { digestService } from './digestService';
+import { generateBriefWithAgents } from '../agents/digestOrchestrator';
 import { sendMessage }   from './telegram';
 import { isSkipped }     from './botCommands';
 import { upsertItems, getUnsentItems, markSent, saveDigest } from '../db/itemsRepo';
@@ -27,7 +27,15 @@ function isDeepSource(id: string): boolean {
 
 const DEEP_CATEGORIES = [Category.Learning, Category.Thinking, Category.Podcast];
 
+let _pipelineRunning = false;
+
 export async function runDigestPipeline(): Promise<void> {
+  if (_pipelineRunning) {
+    logger.warn('[pipeline] already running — skipping duplicate call');
+    return;
+  }
+  _pipelineRunning = true;
+  try {
   logger.info('[pipeline] starting');
 
   const since = new Date(Date.now() - config.lookbackHours * 3_600_000);
@@ -134,8 +142,8 @@ export async function runDigestPipeline(): Promise<void> {
   const ranked = rankingService.rank(deduped);
   logger.info(`[pipeline] ranked top: ${ranked.length}`);
 
-  // 6. Generate brief via LLM — returns up to 3 message strings
-  const messages = await digestService.generateBrief(ranked);
+  // 6. Generate brief — 5 blocks in parallel, each via its own agent
+  const messages = await generateBriefWithAgents(ranked);
 
   // 7. Send each message separately
   for (const msg of messages) {
@@ -161,4 +169,7 @@ export async function runDigestPipeline(): Promise<void> {
   );
 
   logger.info(`[pipeline] done — ${messages.length} message(s) sent, ${sentIds.length} items archived`);
+  } finally {
+    _pipelineRunning = false;
+  }
 }

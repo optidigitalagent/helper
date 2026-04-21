@@ -7,7 +7,8 @@ import { saveAnalysis, saveDiscoveredEntities, ingestAnalysisForDigest, listAnal
 import { analyzeUrl, LinkAnalysis } from './linkAnalyzer';
 import { recordSourceSignal, listSourceReputations, setSourceStatus, SourceStatus } from '../db/sourceReputationRepo';
 import { searchWeb }                    from './webSearch';
-import { handleIntentQuery, isIntentQuery, explainTopic, chatReply, clearHistory, addToHistory } from './intentService';
+import { handleIntentQuery, isIntentQuery, explainTopic, chatReply, clearHistory, addToHistory, recommendPodcasts } from './intentService';
+import { runOrchestrator, runContentOrchestrator, buildContentInput } from '../agents';
 import { runPushScan }                  from './pushMonitor';
 import { discoverFeed, extractKeywords } from './sourceDiscovery';
 import { SOURCE_GOVERNANCE } from './sourceGovernance';
@@ -194,6 +195,54 @@ async function handleAdd(bot: TelegramBot, chatId: number, url: string, note: st
     logger.error('[botCommands] handleAdd error stack:', e.stack ?? e.message);
     await reply(bot, chatId, `❌ ${e.message}`);
   }
+}
+
+// ─── Voice summary for URLs ──────────────────────────────────────────────────
+
+/**
+ * Analyze a URL, send a structured text summary, then send a voice message.
+ * Called fire-and-forget after handleAdd confirms the item was saved.
+ */
+async function summarizeAndSpeak(bot: TelegramBot, chatId: number, url: string): Promise<void> {
+  const thinking = await reply(bot, chatId, '🎙 Анализирую и готовлю пересказ...').catch(() => undefined);
+
+  let analysis: Awaited<ReturnType<typeof analyzeUrl>>;
+  try {
+    analysis = await analyzeUrl(url);
+  } catch (err) {
+    logger.warn(`[botCommands] summarizeAndSpeak analyzeUrl failed: ${(err as Error).message}`);
+    if (thinking) await bot.deleteMessage(chatId, thinking.message_id).catch(() => {});
+    return;
+  }
+
+  const verdictIcon = ({ must_watch: '🔥', worth_watching: '✅', can_skip: '⚠️', skip: '⏭' } as Record<string, string>)[analysis.verdict] ?? '📄';
+  const textSummary = [
+    `${verdictIcon} *${analysis.title}*`,
+    '',
+    analysis.summary,
+    analysis.why_it_matters  ? `\n💡 _${analysis.why_it_matters}_`  : '',
+    analysis.practical_value ? `\n🔧 _${analysis.practical_value}_` : '',
+  ].filter(Boolean).join('\n').trim();
+
+  if (thinking) {
+    await bot.editMessageText(textSummary, {
+      chat_id: chatId, message_id: thinking.message_id, parse_mode: 'Markdown',
+    }).catch(async () => bot.sendMessage(chatId, textSummary, { parse_mode: 'Markdown' }).catch(() => {}));
+  } else {
+    await bot.sendMessage(chatId, textSummary, { parse_mode: 'Markdown' }).catch(() => {});
+  }
+
+  // Build clean spoken text (no markdown, concise)
+  const spoken = [
+    analysis.title ? `${analysis.title}.` : '',
+    analysis.summary,
+    analysis.why_it_matters  ? `Почему важно: ${analysis.why_it_matters}.`  : '',
+    analysis.practical_value ? `Как применить: ${analysis.practical_value}.` : '',
+  ].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim().slice(0, 800);
+
+  await speakText(bot, chatId, spoken).catch((err) =>
+    logger.warn(`[botCommands] TTS failed: ${(err as Error).message}`),
+  );
 }
 
 // ─── /learn ───────────────────────────────────────────────────────────────────
@@ -464,12 +513,13 @@ async function handleHelp(bot: TelegramBot, chatId: number): Promise<void> {
     `🔗 *Ссылки*\n` +
     `/add <url> [заметка] — добавить в следующий дайджест\n` +
     `_Или просто скинь ссылку — поймаю автоматически_\n\n` +
-    `💬 *Просто напиши*\n` +
-    `_"хочу идеи"_ / _"хочу понять AI agents"_ / _"хочу посмотреть по бизнесу"_\n` +
-    `→ система поймёт что нужно и подберёт лучший формат\n\n` +
+    `🧠 *Просто напиши — мультиагентный анализ*\n` +
+    `_"хочу идеи"_ / _"что происходит с AI?"_ / _"дай философию на сегодня"_\n` +
+    `→ несколько агентов параллельно: рынок / AI / тренды / знания / философия\n\n` +
     `🌐 *Поиск*\n` +
     `/search <запрос> — поиск в интернете через Tavily\n` +
-    `/push — проверить свежие сильные материалы прямо сейчас\n\n` +
+    `/push — проверить свежие сильные материалы прямо сейчас\n` +
+    `/recs [тема] — классика подкастов о философии, бизнесе, богатых людях\n\n` +
     `🧠 *Анализ и обучение*\n` +
     `/analyze <url> — разбор: стоит смотреть? нужно следить за источником?\n` +
     `/tracked — источники по репутации (trusted/tracked/candidate)\n` +
@@ -607,6 +657,9 @@ export function registerBotCommands(): void {
     const urlMatchV = transcribed.match(URL_REGEX);
     if (urlMatchV) {
       await handleAdd(bot, msg.chat.id, urlMatchV[0], transcribed.replace(urlMatchV[0], '').trim());
+      summarizeAndSpeak(bot, msg.chat.id, urlMatchV[0]).catch((err) =>
+        logger.warn(`[botCommands] summarizeAndSpeak (voice): ${(err as Error).message}`),
+      );
       return;
     }
     if (isIntentQuery(transcribed)) {
@@ -654,13 +707,60 @@ export function registerBotCommands(): void {
       }
       if (isIntentQuery(transcribed)) {
         addToHistory(msg.chat.id, 'user', transcribed);
-        const resp = await handleIntentQuery(transcribed).catch(() => '');
-        const safe = resp?.trim() || '🤷 Ничего не нашёл.';
+        const result = await runOrchestrator({ query: transcribed, chatId: msg.chat.id }).catch(() => null);
+        const safe   = result?.synthesis?.trim() || '🤷 Ничего не нашёл.';
         if (safe) addToHistory(msg.chat.id, 'assistant', safe);
         await bot.sendMessage(msg.chat.id, safe, { parse_mode: 'Markdown' }).catch(() => {});
       } else {
         const chatResp2 = await chatReply(transcribed, msg.chat.id).catch(() => '');
         await bot.sendMessage(msg.chat.id, chatResp2?.trim() || '🤷 Не смог ответить.', { parse_mode: 'Markdown' }).catch(() => {});
+      }
+      return;
+    }
+
+    // ── Document handler: text files → content orchestrator ──────────────────
+    if (msg.document) {
+      const doc = msg.document;
+      const isTextFile =
+        (doc.mime_type?.startsWith('text/') ?? false) ||
+        /\.(txt|md|csv|json)$/i.test(doc.file_name ?? '');
+      if (!isTextFile) {
+        await reply(bot, msg.chat.id, '📄 Поддерживаются текстовые файлы (.txt, .md, .csv). Отправь такой — разберу через мультиагентную систему.');
+        return;
+      }
+      const MAX_BYTES = 150_000;
+      if (doc.file_size && doc.file_size > MAX_BYTES) {
+        await reply(bot, msg.chat.id, '❌ Файл слишком большой. Максимум ~150KB.');
+        return;
+      }
+      const thinking = await reply(bot, msg.chat.id, '📄 Читаю файл...').catch(() => undefined);
+      try {
+        const fileInfo = await bot.getFile(doc.file_id);
+        const fileUrl  = `https://api.telegram.org/file/bot${config.telegram.botToken}/${fileInfo.file_path}`;
+        const { data } = await axios.get<Buffer>(fileUrl, { responseType: 'arraybuffer' });
+        const fileText = Buffer.from(data).toString('utf-8').trim();
+        if (!fileText) {
+          await bot.editMessageText('❌ Файл пуст.', { chat_id: msg.chat.id, message_id: thinking?.message_id ?? 0 }).catch(() => {});
+          return;
+        }
+        if (thinking) {
+          await bot.editMessageText('🧠 Анализирую через мультиагентную систему...', {
+            chat_id: msg.chat.id, message_id: thinking.message_id,
+          }).catch(() => {});
+        }
+        const input  = buildContentInput(fileText, { fileName: doc.file_name ?? undefined, mimeType: doc.mime_type ?? 'text/plain' });
+        const result = await runContentOrchestrator(input);
+        const safe   = result.synthesis?.trim() || '🤷 Не смог разобрать файл.';
+        const header = `📄 *${doc.file_name ?? 'Файл'}* → \`${result.agentsUsed.join(', ')}\`\n\n`;
+        const full   = header + safe;
+        if (thinking) {
+          await bot.editMessageText(full, { chat_id: msg.chat.id, message_id: thinking.message_id, parse_mode: 'Markdown' })
+            .catch(async () => reply(bot, msg.chat.id, full));
+        } else {
+          await reply(bot, msg.chat.id, full);
+        }
+      } catch (err) {
+        await bot.sendMessage(msg.chat.id, `❌ ${(err as Error).message.slice(0, 200)}`).catch(() => {});
       }
       return;
     }
@@ -675,16 +775,20 @@ export function registerBotCommands(): void {
       const url  = urlMatch[0];
       const note = text.replace(url, '').trim();
       await handleAdd(bot, msg.chat.id, url, note);
+      // Fire-and-forget: analyze → text summary + voice message
+      summarizeAndSpeak(bot, msg.chat.id, url).catch((err) =>
+        logger.warn(`[botCommands] summarizeAndSpeak: ${(err as Error).message}`),
+      );
       return;
     }
 
-    // PULL MODE: intent-based query (search + recommendations)
+    // PULL MODE: intent-based query → multi-agent orchestrator
     if (isIntentQuery(text)) {
-      const thinking = await reply(bot, msg.chat.id, '🤔 Ищу...').catch(() => undefined);
+      const thinking = await reply(bot, msg.chat.id, '🧠 Анализирую...').catch(() => undefined);
       try {
         addToHistory(msg.chat.id, 'user', text);
-        const response = await handleIntentQuery(text);
-        const safeResponse = response?.trim() || '🤷 Ничего не нашёл. Попробуй /search или задай вопрос иначе.';
+        const result       = await runOrchestrator({ query: text, chatId: msg.chat.id });
+        const safeResponse = result.synthesis?.trim() || '🤷 Ничего не нашёл. Попробуй /search или задай вопрос иначе.';
         if (safeResponse) addToHistory(msg.chat.id, 'assistant', safeResponse);
         const sendSafe = async (t: string) => {
           await bot.sendMessage(msg.chat.id, t, { parse_mode: 'Markdown' }).catch(async () =>
@@ -704,7 +808,28 @@ export function registerBotCommands(): void {
       return;
     }
 
-    // CHAT MODE: any other text — simple direct LLM reply
+    // CONTENT MODE: long pasted text without intent keywords → content orchestrator
+    if (text.length > 400) {
+      const thinking = await reply(bot, msg.chat.id, '🧠 Анализирую текст через мультиагентную систему...').catch(() => undefined);
+      try {
+        const input  = buildContentInput(text);
+        const result = await runContentOrchestrator(input);
+        const safe   = result.synthesis?.trim() || '🤷 Не смог разобрать текст.';
+        const header = `📝 \`${result.agentsUsed.join(', ')}\`\n\n`;
+        const full   = header + safe;
+        if (thinking) {
+          await bot.editMessageText(full, { chat_id: msg.chat.id, message_id: thinking.message_id, parse_mode: 'Markdown' })
+            .catch(async () => reply(bot, msg.chat.id, full));
+        } else {
+          await reply(bot, msg.chat.id, full);
+        }
+      } catch (err) {
+        await bot.sendMessage(msg.chat.id, `❌ ${(err as Error).message.slice(0, 200)}`).catch(() => {});
+      }
+      return;
+    }
+
+    // CHAT MODE: short text — simple direct LLM reply
     const thinking = await reply(bot, msg.chat.id, '💬').catch(() => undefined);
     try {
       const response = await chatReply(text, msg.chat.id);
@@ -744,6 +869,24 @@ export function registerBotCommands(): void {
     }
   });
 
+  // /recs [тема] — классические эпизоды подкастов о философии/бизнесе/богатых людях
+  bot.onText(/^\/recs(@\w+)?(?:\s+(.+))?$/, async (msg, match) => {
+    if (!isAuthorized(msg.chat.id)) return;
+    const topic = match?.[2]?.trim();
+    const thinking = await reply(bot, msg.chat.id, '🎙 Подбираю эпизоды...').catch(() => undefined);
+    try {
+      const text = await recommendPodcasts(topic);
+      if (thinking) {
+        await bot.editMessageText(text, { chat_id: msg.chat.id, message_id: thinking.message_id, parse_mode: 'Markdown' }).catch(async () => reply(bot, msg.chat.id, text));
+      } else {
+        await reply(bot, msg.chat.id, text);
+      }
+    } catch (err) {
+      await bot.sendMessage(msg.chat.id, `❌ ${(err as Error).message}`).catch(() => {});
+    }
+  });
+
+  // /ask <query> — multi-agent orchestrator
   // /push — manual trigger push scan
   bot.onText(/^\/push(@\w+)?$/, async (msg) => {
     if (!isAuthorized(msg.chat.id)) return;

@@ -242,6 +242,25 @@ export async function chatReply(text: string, chatId: string | number = 'default
   return response;
 }
 
+/** Recommend classic podcast episodes on philosophy, business, wealthy people */
+export async function recommendPodcasts(topic?: string): Promise<string> {
+  const system = `Ты — эксперт по подкастам о бизнесе, философии и успешных людях.
+Рекомендуй только реально существующие эпизоды — классику, которую стоит послушать независимо от даты выхода.
+Фокус: философия жизни, мышление богатых людей, бизнес-истории, биографии предпринимателей.
+НЕ рекомендуй про AI/крипту если не просят.
+Подкасты: Tim Ferriss, Founders, Acquired, Lex Fridman, Naval, Knowledge Project, Masters of Scale, Diary of a CEO, All-In, Invest Like the Best.
+Формат каждого (Telegram Markdown):
+🎙 *Название подкаста — Тема/Гость*
+_Почему стоит послушать — 1–2 предложения_
+Дай 3–5 рекомендаций. Только реальные эпизоды.`;
+
+  const prompt = topic
+    ? `Порекомендуй лучшие эпизоды подкастов на тему: "${topic}"`
+    : `Порекомендуй 5 лучших эпизодов подкастов о философии, бизнесе и богатых людях — самая мощная классика`;
+
+  return llmCall(system, prompt, 800);
+}
+
 /** Explain any topic from model knowledge — used as search fallback */
 export async function explainTopic(query: string): Promise<string> {
   const system = `Ты — эксперт. Объясняй темы простым языком на русском.
