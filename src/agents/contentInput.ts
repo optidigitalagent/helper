@@ -20,6 +20,7 @@ export type ProcessingMode =
 export interface ContentInput {
   inputType:   ContentInputType;
   rawText:     string;
+  userQuery?:  string;  // explicit instruction from user (e.g. file caption)
   fileName?:   string;
   mimeType?:   string;
   sourceName?: string;

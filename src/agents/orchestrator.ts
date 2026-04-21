@@ -1,10 +1,11 @@
 import { Agent, AgentDomain, AgentOutput, OrchestratorRequest, OrchestratorResponse } from './types';
-import { MarketAgent }      from './agents/marketAgent';
-import { AIAgent }          from './agents/aiAgent';
-import { TrendsAgent }      from './agents/trendsAgent';
-import { KnowledgeAgent }   from './agents/knowledgeAgent';
-import { GoalsAgent }       from './agents/goalsAgent';
-import { PhilosophyAgent }  from './agents/philosophyAgent';
+import { MarketAgent }           from './agents/marketAgent';
+import { AIAgent }               from './agents/aiAgent';
+import { TrendsAgent }           from './agents/trendsAgent';
+import { KnowledgeAgent }        from './agents/knowledgeAgent';
+import { GoalsAgent }            from './agents/goalsAgent';
+import { PhilosophyAgent }       from './agents/philosophyAgent';
+import { ProjectAdvisorAgent }   from './agents/projectAdvisorAgent';
 import { getDefaultProvider, getAvailableProviders } from './providers';
 import { compareAnswers }   from './comparison';
 import { logger }           from '../utils/logger';
@@ -18,6 +19,7 @@ const AGENTS: Agent[] = [
   new KnowledgeAgent(),
   new GoalsAgent(),
   new PhilosophyAgent(),
+  new ProjectAdvisorAgent(),
 ];
 
 // ─── Agent selection ──────────────────────────────────────────────────────────

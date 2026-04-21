@@ -3,12 +3,13 @@
 import { AgentOutput, AgentSignal, AgentDomain, OrchestratorResponse } from './types';
 import { ContentInput } from './contentInput';
 import { analyzeContent } from './inputAnalyzer';
-import { MarketAgent }     from './agents/marketAgent';
-import { AIAgent }         from './agents/aiAgent';
-import { TrendsAgent }     from './agents/trendsAgent';
-import { KnowledgeAgent }  from './agents/knowledgeAgent';
-import { GoalsAgent }      from './agents/goalsAgent';
-import { PhilosophyAgent } from './agents/philosophyAgent';
+import { MarketAgent }          from './agents/marketAgent';
+import { AIAgent }              from './agents/aiAgent';
+import { TrendsAgent }          from './agents/trendsAgent';
+import { KnowledgeAgent }       from './agents/knowledgeAgent';
+import { GoalsAgent }           from './agents/goalsAgent';
+import { PhilosophyAgent }      from './agents/philosophyAgent';
+import { ProjectAdvisorAgent }  from './agents/projectAdvisorAgent';
 import { getDefaultProvider } from './providers';
 import { logger } from '../utils/logger';
 import type { Agent } from './types';
@@ -22,6 +23,7 @@ const DOMAIN_AGENTS: Record<AgentDomain, () => Agent> = {
   knowledge:  () => new KnowledgeAgent(),
   goals:      () => new GoalsAgent(),
   philosophy: () => new PhilosophyAgent(),
+  project:    () => new ProjectAdvisorAgent(),
 };
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -89,7 +91,8 @@ export async function runContentOrchestrator(input: ContentInput): Promise<Orche
   const safeAgents = agents.length > 0 ? agents : [new KnowledgeAgent()];
 
   const signal   = contentToSignal(input);
-  const query    = buildQuery(input, cls.processingMode, cls.summary);
+  // If user wrote a caption/instruction — use it directly; otherwise auto-build from classifier
+  const query    = input.userQuery?.trim() || buildQuery(input, cls.processingMode, cls.summary);
   const provider = getDefaultProvider();
 
   const analyzeResults = await Promise.allSettled(

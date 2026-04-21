@@ -748,7 +748,8 @@ export function registerBotCommands(): void {
             chat_id: msg.chat.id, message_id: thinking.message_id,
           }).catch(() => {});
         }
-        const input  = buildContentInput(fileText, { fileName: doc.file_name ?? undefined, mimeType: doc.mime_type ?? 'text/plain' });
+        const caption = msg.caption?.trim() || undefined;
+        const input  = buildContentInput(fileText, { fileName: doc.file_name ?? undefined, mimeType: doc.mime_type ?? 'text/plain', userQuery: caption });
         const result = await runContentOrchestrator(input);
         const safe   = result.synthesis?.trim() || '🤷 Не смог разобрать файл.';
         const header = `📄 *${doc.file_name ?? 'Файл'}* → \`${result.agentsUsed.join(', ')}\`\n\n`;

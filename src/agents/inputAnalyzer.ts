@@ -14,13 +14,14 @@ export interface ContentAnalysis {
 const SYSTEM = `Analyze the text excerpt and return ONLY valid JSON — no markdown, no commentary.
 
 Fields:
-- dominantTopics: array of 1-3 values from: market|ai|trends|knowledge|goals|philosophy
+- dominantTopics: array of 1-3 values from: market|ai|trends|knowledge|goals|philosophy|project
   market     = markets, crypto, macro, economy, geopolitics, finance
   ai         = AI models, tools, agents, automation, technology, software
   trends     = weak signals, emerging topics, new directions, innovations
   knowledge  = ideas, books, podcasts, frameworks, deep content, concepts
   goals      = strategy, priorities, personal development, planning
   philosophy = principles, mindset, wisdom, thinking, ethics, mental models
+  project    = project specs, TZ documents, architecture, tooling research, pricing, implementation plans, product ideas, MVP planning
 - processingMode: one value from: explain|summarize|analyze|extract_insights|extract_actions|extract_sources
   explain          = short unclear concept or term needing explanation
   summarize        = long structured document needing compression
