@@ -25,8 +25,11 @@ export const config = {
     chatId:   env('TELEGRAM_CHAT_ID'),
   },
 
-  // Cron expression for morning digest. Default: 07:30 every day.
-  digestCron: process.env.DIGEST_CRON ?? '30 7 * * *',
+  // Cron expression for morning digest. Default: 07:00 every day.
+  digestCron: process.env.DIGEST_CRON ?? '0 7 * * *',
+
+  // Timezone for cron scheduling and date comparisons
+  timezone: process.env.TZ ?? process.env.TIMEZONE ?? 'Europe/Moscow',
 
   // How far back (hours) to look when collecting items for the digest
   lookbackHours: parseInt(process.env.LOOKBACK_HOURS ?? '24', 10),

@@ -6,7 +6,7 @@ import { clusterItems }  from './clustering';
 import { generateBriefWithAgents } from '../agents/digestOrchestrator';
 import { sendMessage }   from './telegram';
 import { isSkipped }     from './botCommands';
-import { upsertItems, getUnsentItems, markSent, saveDigest } from '../db/itemsRepo';
+import { upsertItems, getUnsentItems, markSent, saveDigest, getLastDigest } from '../db/itemsRepo';
 import { config }        from '../config';
 import { logger }        from '../utils/logger';
 import { NormalizedItem, Category, SourceType } from '../types';
@@ -29,11 +29,26 @@ const DEEP_CATEGORIES = [Category.Learning, Category.Thinking, Category.Podcast]
 
 let _pipelineRunning = false;
 
-export async function runDigestPipeline(): Promise<void> {
+export async function runDigestPipeline(opts?: { scheduled?: boolean }): Promise<void> {
   if (_pipelineRunning) {
     logger.warn('[pipeline] already running — skipping duplicate call');
     return;
   }
+
+  // Guard: scheduled runs only — skip if digest was already sent today
+  if (opts?.scheduled) {
+    const last = await getLastDigest().catch(() => null);
+    if (last) {
+      const tz       = config.timezone;
+      const todayStr = new Date().toLocaleDateString('sv', { timeZone: tz });
+      const lastStr  = new Date(last.createdAt).toLocaleDateString('sv', { timeZone: tz });
+      if (todayStr === lastStr) {
+        logger.info('[pipeline] daily digest already sent today — skipping');
+        return;
+      }
+    }
+  }
+
   _pipelineRunning = true;
   try {
   logger.info('[pipeline] starting');
