@@ -3,6 +3,7 @@ import app from './app';
 import { startScheduler } from './scheduler';
 import { startBotPolling, getBot } from './services/telegram';
 import { registerBotCommands } from './services/botCommands';
+import { startReminderBot, stopReminderBot } from './services/reminderBot';
 import { supabaseHealthCheck } from './db/client';
 import { config } from './config';
 import { logger } from './utils/logger';
@@ -39,6 +40,11 @@ const server = app.listen(config.port, () => {
     .catch((err) => {
       logger.error('[startup] telegram bot FAILED to initialize:', (err as Error).message);
     });
+  startReminderBot()
+    .then(() => logger.info('[startup] reminder bot initialized'))
+    .catch((err) => {
+      logger.warn('[startup] reminder bot FAILED to initialize (non-fatal):', (err as Error).message);
+    });
 });
 
 // ── Graceful shutdown ─────────────────────────────────────────────────────────
@@ -46,15 +52,16 @@ const server = app.listen(config.port, () => {
 // Stop polling immediately so the new instance doesn't get a 409 Conflict.
 
 function shutdown(signal: string): void {
-  logger.info(`[server] ${signal} received — stopping bot polling`);
-  getBot().stopPolling()
-    .then(() => {
-      server.close(() => {
-        logger.info('[server] exited cleanly');
-        process.exit(0);
-      });
-    })
-    .catch(() => process.exit(0));
+  logger.info(`[server] ${signal} received — stopping bots`);
+  Promise.allSettled([
+    getBot().stopPolling(),
+    stopReminderBot(),
+  ]).then(() => {
+    server.close(() => {
+      logger.info('[server] exited cleanly');
+      process.exit(0);
+    });
+  }).catch(() => process.exit(0));
 }
 
 process.on('SIGTERM', () => shutdown('SIGTERM'));

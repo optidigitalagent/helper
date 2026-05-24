@@ -33,4 +33,11 @@ export const config = {
 
   // How far back (hours) to look when collecting items for the digest
   lookbackHours: parseInt(process.env.LOOKBACK_HOURS ?? '24', 10),
+
+  reminder: {
+    botToken:        process.env.REMINDER_BOT_TOKEN ?? '',
+    defaultTimezone: process.env.REMINDER_DEFAULT_TIMEZONE ?? 'Europe/Kyiv',
+    audioModel:      process.env.REMINDER_AUDIO_TRANSCRIPTION_MODEL ?? 'whisper-1',
+    defaultChatId:   process.env.REMINDER_DEFAULT_CHAT_ID ?? '',
+  },
 };

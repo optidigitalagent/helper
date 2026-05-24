@@ -7,10 +7,12 @@ import { generateBriefWithAgents } from '../agents/digestOrchestrator';
 import { sendMessage }   from './telegram';
 import { isSkipped }     from './botCommands';
 import { upsertItems, getUnsentItems, markSent, saveDigest, getLastDigest } from '../db/itemsRepo';
+import { getRemindersForDigest } from '../db/remindersRepo';
 import { supabaseHealthCheck } from '../db/client';
 import { config }        from '../config';
 import { logger }        from '../utils/logger';
 import { NormalizedItem, Category, SourceType } from '../types';
+import { Reminder }      from '../types/reminder';
 import { recordSourceSignal }  from '../db/sourceReputationRepo';
 import { fillGapsWithSearch }  from './webSearch';
 
@@ -40,6 +42,56 @@ function isDeepSource(id: string): boolean {
 }
 
 const DEEP_CATEGORIES = [Category.Learning, Category.Thinking, Category.Podcast];
+
+// ─── Reminders digest block ───────────────────────────────────────────────────
+
+function fmtTime(r: Reminder): string {
+  if (!r.due_at) return '';
+  return new Date(r.due_at).toLocaleTimeString('ru-RU', {
+    timeZone: r.timezone ?? 'Europe/Kyiv', hour: '2-digit', minute: '2-digit',
+  });
+}
+
+async function buildRemindersBlock(tz: string): Promise<string | null> {
+  const { today, tomorrow, overdue } = await getRemindersForDigest(tz);
+  if (today.length === 0 && tomorrow.length === 0 && overdue.length === 0) return null;
+
+  const lines: string[] = ['🗓 *ЛИЧНЫЕ ЗАДАЧИ*'];
+
+  if (today.length > 0) {
+    lines.push('\n📅 *Сегодня:*');
+    for (const r of today) {
+      const t = fmtTime(r);
+      lines.push(`• ${t ? `${t} ` : ''}${r.normalized_title}`);
+    }
+  }
+
+  if (tomorrow.length > 0) {
+    lines.push('\n📅 *Завтра:*');
+    for (const r of tomorrow) {
+      lines.push(`• ${r.normalized_title}`);
+    }
+  }
+
+  if (overdue.length > 0) {
+    lines.push('\n⚠️ *Просрочено:*');
+    for (const r of overdue) {
+      lines.push(`• ${r.normalized_title}${r.due_date ? ` _(${r.due_date})_` : ''}`);
+    }
+  }
+
+  // Simple recommendation
+  const urgent = [...today, ...overdue].filter((r) => r.priority === 'urgent' || r.priority === 'high');
+  if (urgent.length > 0) {
+    lines.push(`\n💡 *Подготовиться:*\nВ первую очередь — ${urgent[0].normalized_title}`);
+  } else if (overdue.length > 0) {
+    lines.push(`\n💡 *Подготовиться:*\nЕсть просроченные задачи — разберись сегодня`);
+  } else if (today.length > 0) {
+    lines.push(`\n💡 *Подготовиться:*\nСначала — ${today[0].normalized_title}`);
+  }
+
+  return lines.join('\n');
+}
 
 let _pipelineRunning = false;
 
@@ -214,6 +266,21 @@ export async function runDigestPipeline(opts?: { scheduled?: boolean }): Promise
   } catch (e) {
     logger.error('[digest] LLM summarization failed:', (e as Error).message);
     throw e;
+  }
+
+  // ── Prepend personal reminders block (non-fatal) ──────────────────────────
+  try {
+    const remBlock = await withTimeout(
+      buildRemindersBlock(config.reminder.defaultTimezone),
+      10_000,
+      'buildRemindersBlock',
+    );
+    if (remBlock) {
+      messages.unshift(remBlock);
+      logger.info('[pipeline] reminders block added');
+    }
+  } catch (e) {
+    logger.warn('[pipeline] reminders block skipped (non-fatal):', (e as Error).message);
   }
 
   // ── STEP 8: Send each message ──────────────────────────────────────────────
