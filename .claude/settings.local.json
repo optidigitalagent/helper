@@ -53,7 +53,13 @@
       "Bash(pm2 logs *)",
       "Bash(pm2 delete *)",
       "WebFetch(domain:www.youtube.com)",
-      "WebSearch"
+      "WebSearch",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "Bash(git push *)",
+      "PowerShell(node --version)",
+      "PowerShell(nslookup *)",
+      "Bash(pm2 restart *)"
     ]
   }
 }

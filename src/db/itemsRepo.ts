@@ -1,10 +1,19 @@
 import { getDb } from './client';
 import { NormalizedItem, Category, SourceType } from '../types';
 import { makeId } from '../utils/hash';
+import { logger } from '../utils/logger';
+
+const TABLE = 'content_items';
 
 /** Upsert items; returns estimated count of newly inserted rows */
 export async function upsertItems(items: NormalizedItem[]): Promise<number> {
   if (items.length === 0) return 0;
+
+  const urlStr  = process.env.SUPABASE_URL ?? '';
+  let   hostname = urlStr;
+  try { hostname = new URL(urlStr).hostname; } catch { /* keep raw */ }
+
+  logger.info(`[upsertItems] operation=upsert table=${TABLE} items=${items.length} supabase_host=${hostname}`);
 
   const rows = items.map((item) => ({
     id:           item.id,
@@ -21,12 +30,57 @@ export async function upsertItems(items: NormalizedItem[]): Promise<number> {
     raw:          item.raw ?? {},
   }));
 
-  const { error, count } = await getDb()
-    .from('content_items')
-    .upsert(rows, { onConflict: 'id', count: 'estimated' });
+  try {
+    const { error, count } = await getDb()
+      .from(TABLE)
+      .upsert(rows, { onConflict: 'id', count: 'estimated' });
 
-  if (error) throw new Error(`upsertItems failed: ${error.message}`);
-  return count ?? 0;
+    if (error) {
+      // error is PostgrestError — but when fetch fails, .message = "TypeError: fetch failed"
+      // and the real network cause is inside the JS Error that wraps it.
+      const pgErr   = error as { message: string; code?: string; hint?: string; details?: string; cause?: unknown };
+      const causeMsg = pgErr.cause instanceof Error ? pgErr.cause.message : String(pgErr.cause ?? 'n/a');
+      logger.error(
+        `[upsertItems] FAILED\n` +
+        `  operation:      upsert\n` +
+        `  table:          ${TABLE}\n` +
+        `  items_count:    ${items.length}\n` +
+        `  supabase_host:  ${hostname}\n` +
+        `  error.name:     PostgrestError\n` +
+        `  error.message:  ${pgErr.message}\n` +
+        `  error.code:     ${pgErr.code ?? 'n/a'}\n` +
+        `  error.hint:     ${pgErr.hint ?? 'n/a'}\n` +
+        `  error.details:  ${pgErr.details ?? 'n/a'}\n` +
+        `  error.cause:    ${causeMsg}`,
+      );
+      throw new Error(`upsertItems failed: ${pgErr.message} (code=${pgErr.code ?? 'n/a'} cause=${causeMsg})`);
+    }
+
+    logger.info(`[upsertItems] ok — estimated new rows: ${count ?? 0}`);
+    return count ?? 0;
+
+  } catch (e) {
+    if ((e as Error).message.startsWith('upsertItems failed:')) throw e; // already logged
+
+    // Unexpected throw (e.g. undici TypeError before SDK catches it)
+    const err   = e as Error & { cause?: Error & { code?: string; syscall?: string } };
+    const cause = err.cause;
+    logger.error(
+      `[upsertItems] UNEXPECTED THROW\n` +
+      `  operation:     upsert\n` +
+      `  table:         ${TABLE}\n` +
+      `  items_count:   ${items.length}\n` +
+      `  supabase_host: ${hostname}\n` +
+      `  error.name:    ${err.name}\n` +
+      `  error.message: ${err.message}\n` +
+      `  cause.code:    ${cause?.code ?? 'n/a'}\n` +
+      `  cause.syscall: ${cause?.syscall ?? 'n/a'}\n` +
+      `  cause.message: ${cause?.message ?? 'n/a'}\n` +
+      `  stack:\n` +
+      `${(err.stack ?? '').split('\n').slice(0, 8).map(l => '    ' + l).join('\n')}`,
+    );
+    throw new Error(`upsertItems failed: ${err.name}: ${err.message} (cause=${cause?.message ?? 'n/a'})`);
+  }
 }
 
 /** Fetch unsent items newer than `since`, ordered by score desc */

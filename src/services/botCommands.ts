@@ -69,14 +69,17 @@ function reply(bot: TelegramBot, chatId: number, text: string): Promise<Telegram
 // ─── /brief ───────────────────────────────────────────────────────────────────
 
 async function handleBrief(bot: TelegramBot, chatId: number): Promise<void> {
+  logger.info('[brief] command received');
   await reply(bot, chatId, '⏳ Запускаю дайджест...').catch(() => {});
+  logger.info('[brief] digest started');
   try {
     await runDigestPipeline();
+    logger.info('[brief] digest finished');
   } catch (err) {
     const msg = ((err as Error).message ?? 'Unknown error').slice(0, 300);
-    logger.error('[botCommands] /brief error:', msg);
+    logger.error('[brief] digest FAILED:', msg);
     // Plain text — no parse_mode, avoids Telegram 400 on special chars in error messages
-    await bot.sendMessage(chatId, `❌ Ошибка: ${msg}`).catch(() => {});
+    await bot.sendMessage(chatId, `❌ Ошибка дайджеста: ${msg}`).catch(() => {});
   }
 }
 
