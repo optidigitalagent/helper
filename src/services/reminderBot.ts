@@ -14,6 +14,13 @@ import {
   deleteReminder,
 } from '../db/remindersRepo';
 import { Reminder } from '../types/reminder';
+import { detectCaptureType, parseCapture, formatCaptureReply } from './captureParser';
+import {
+  createCaptureNote,
+  listRecentNotes,
+  getNoteByShortId,
+  getAllNextActions,
+} from '../db/captureRepo';
 
 // ─── Bot singleton ────────────────────────────────────────────────────────────
 
@@ -68,6 +75,13 @@ function send(bot: TelegramBot, chatId: number, text: string): Promise<TelegramB
 }
 
 async function handleSave(bot: TelegramBot, chatId: number, rawText: string): Promise<void> {
+  // ── Route long / structured text to capture, short tasks to reminder ─────
+  const captureType = detectCaptureType(rawText);
+  if (captureType) {
+    await handleCapture(bot, chatId, rawText, captureType);
+    return;
+  }
+
   const thinking = await send(bot, chatId, '⏳ Сохраняю...').catch(() => undefined);
   try {
     const parsed   = await parseReminder(rawText);
@@ -83,6 +97,36 @@ async function handleSave(bot: TelegramBot, chatId: number, rawText: string): Pr
   } catch (err) {
     const msg = `❌ Не смог сохранить: ${(err as Error).message.slice(0, 200)}`;
     logger.error('[reminderBot] handleSave:', (err as Error).message);
+    if (thinking) {
+      await bot.editMessageText(msg, { chat_id: chatId, message_id: thinking.message_id }).catch(() => {});
+    } else {
+      await bot.sendMessage(chatId, msg).catch(() => {});
+    }
+  }
+}
+
+async function handleCapture(
+  bot: TelegramBot,
+  chatId: number,
+  rawText: string,
+  captureType: ReturnType<typeof detectCaptureType> & {}
+): Promise<void> {
+  const thinking = await send(bot, chatId, '🔄 Анализирую и структурирую...').catch(() => undefined);
+  try {
+    const parsed = await parseCapture(rawText, captureType);
+    const note   = await createCaptureNote({ chat_id: String(chatId), type: captureType, raw_text: rawText, ...parsed });
+    const text   = formatCaptureReply(note);
+
+    if (thinking) {
+      await bot.editMessageText(text, {
+        chat_id: chatId, message_id: thinking.message_id, parse_mode: 'MarkdownV2',
+      }).catch(async () => bot.sendMessage(chatId, text, { parse_mode: 'MarkdownV2' }).catch(() => {}));
+    } else {
+      await bot.sendMessage(chatId, text, { parse_mode: 'MarkdownV2' }).catch(() => {});
+    }
+  } catch (err) {
+    const msg = `❌ Не смог структурировать: ${(err as Error).message.slice(0, 200)}`;
+    logger.error('[reminderBot] handleCapture:', (err as Error).message);
     if (thinking) {
       await bot.editMessageText(msg, { chat_id: chatId, message_id: thinking.message_id }).catch(() => {});
     } else {
@@ -153,23 +197,78 @@ async function handleDelete(bot: TelegramBot, chatId: number, idPrefix: string |
   await send(bot, chatId, `🗑 Удалено: ${match.normalized_title}`);
 }
 
+// ─── Capture commands ─────────────────────────────────────────────────────────
+
+async function handleNotes(bot: TelegramBot, chatId: number): Promise<void> {
+  const notes = await listRecentNotes(String(chatId), 10);
+  if (notes.length === 0) {
+    await send(bot, chatId, '📝 Заметок пока нет.\n\nОтправь голосовое или текст с итогами звонков — структурирую автоматически.');
+    return;
+  }
+  const TYPE_EMOJI: Record<string, string> = {
+    call_summary: '📞', checklist: '✅', client_notes: '👥', raw_note: '📝',
+  };
+  const lines = [`📋 *Последние заметки:*\n`];
+  notes.forEach((n, i) => {
+    const emoji  = TYPE_EMOJI[n.type] ?? '📝';
+    const date   = new Date(n.created_at).toLocaleDateString('ru-RU');
+    const shortId = n.id.slice(0, 8);
+    lines.push(`${i + 1}\\. ${emoji} *${n.title.replace(/[_*[\]()~`>#+\-=|{}.!\\]/g, '\\$&')}*`);
+    lines.push(`   ${date}  →  /note ${shortId}`);
+  });
+  await bot.sendMessage(chatId, lines.join('\n'), { parse_mode: 'MarkdownV2' }).catch(() => {});
+}
+
+async function handleNote(bot: TelegramBot, chatId: number, shortId: string | undefined): Promise<void> {
+  if (!shortId) {
+    await send(bot, chatId, '_/note <id> — показать заметку. ID из /notes (первые 8 символов)_');
+    return;
+  }
+  const note = await getNoteByShortId(String(chatId), shortId);
+  if (!note) {
+    await send(bot, chatId, `❌ Заметка \`${shortId}\` не найдена.\n_/notes — список заметок_`);
+    return;
+  }
+  const text = formatCaptureReply(note);
+  await bot.sendMessage(chatId, text, { parse_mode: 'MarkdownV2' }).catch(
+    () => bot.sendMessage(chatId, note.title + '\n\n' + note.summary).catch(() => {})
+  );
+}
+
+async function handleActions(bot: TelegramBot, chatId: number): Promise<void> {
+  const items = await getAllNextActions(String(chatId), 48);
+  if (items.length === 0) {
+    await send(bot, chatId, '✅ Нет активных следующих действий за последние 48 часов.');
+    return;
+  }
+  const lines = [`🧩 *Следующие действия (48ч):*\n`];
+  items.slice(0, 20).forEach(({ title, action }, i) => {
+    const t = title.replace(/[_*[\]()~`>#+\-=|{}.!\\]/g, '\\$&');
+    const a = action.replace(/[_*[\]()~`>#+\-=|{}.!\\]/g, '\\$&');
+    lines.push(`${i + 1}\\. \\[${t}\\] ${a}`);
+  });
+  await bot.sendMessage(chatId, lines.join('\n'), { parse_mode: 'MarkdownV2' }).catch(() => {});
+}
+
 async function handleHelp(bot: TelegramBot, chatId: number): Promise<void> {
   await send(bot, chatId,
-    `*Reminder Bot*\n\n` +
-    `📝 *Добавить задачу*\n` +
-    `Напиши текстом или отправь голосовое:\n` +
-    `_"напомни завтра в 10 проверить Railway"_\n` +
-    `_"в понедельник созвон с клиентом по стоматологии"_\n` +
-    `_"через 2 часа проверить deploy"_\n` +
-    `_"каждое утро посмотреть бриф"_\n\n` +
-    `📋 *Список*\n` +
+    `*Capture & Reminder Bot*\n\n` +
+    `🎙 *Голосовое / текст:*\n` +
+    `Отправь итоги звонков, список дел, задачу — сохраню структурированно.\n\n` +
+    `📋 *Задачи и напоминания:*\n` +
     `/tasks — все активные\n` +
     `/today — сегодня\n` +
-    `/tomorrow — завтра\n\n` +
-    `✅ *Управление*\n` +
+    `/tomorrow — завтра\n` +
     `/done <id> — закрыть задачу\n` +
     `/delete <id> — удалить задачу\n\n` +
-    `_ID — первые 8 символов из /tasks_`
+    `📌 *Заметки и итоги:*\n` +
+    `/notes — последние 10 заметок\n` +
+    `/note <id> — открыть заметку\n` +
+    `/actions — все следующие шаги (48ч)\n\n` +
+    `💡 *Примеры:*\n` +
+    `_"напомни завтра в 10 проверить деплой"_\n` +
+    `_"итоги звонков: smile makers — отправил инфу..."_\n` +
+    `[Голосовое с несколькими клиентами → структурированный список]`
   );
 }
 
@@ -242,6 +341,26 @@ export async function startReminderBot(): Promise<void> {
 
   bot.onText(/^\/help(@\w+)?$/, async (msg) => {
     await handleHelp(bot, msg.chat.id).catch(() => {});
+  });
+
+  // ── Capture commands ──────────────────────────────────────────────────────
+
+  bot.onText(/^\/notes(@\w+)?$/, async (msg) => {
+    await handleNotes(bot, msg.chat.id).catch((e) =>
+      bot.sendMessage(msg.chat.id, `❌ ${(e as Error).message.slice(0, 200)}`).catch(() => {})
+    );
+  });
+
+  bot.onText(/^\/note(@\w+)?(?:\s+(\S+))?$/, async (msg, match) => {
+    await handleNote(bot, msg.chat.id, match?.[2]).catch((e) =>
+      bot.sendMessage(msg.chat.id, `❌ ${(e as Error).message.slice(0, 200)}`).catch(() => {})
+    );
+  });
+
+  bot.onText(/^\/actions(@\w+)?$/, async (msg) => {
+    await handleActions(bot, msg.chat.id).catch((e) =>
+      bot.sendMessage(msg.chat.id, `❌ ${(e as Error).message.slice(0, 200)}`).catch(() => {})
+    );
   });
 
   // Voice messages

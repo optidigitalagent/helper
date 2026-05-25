@@ -8,11 +8,13 @@ import { sendMessage }   from './telegram';
 import { isSkipped }     from './botCommands';
 import { upsertItems, getUnsentItems, markSent, saveDigest, getLastDigest } from '../db/itemsRepo';
 import { getRemindersForDigest } from '../db/remindersRepo';
+import { getNotesForDigest }     from '../db/captureRepo';
 import { supabaseHealthCheck } from '../db/client';
 import { config }        from '../config';
 import { logger }        from '../utils/logger';
 import { NormalizedItem, Category, SourceType } from '../types';
 import { Reminder }      from '../types/reminder';
+import { CaptureNote }   from '../types/capture';
 import { recordSourceSignal }  from '../db/sourceReputationRepo';
 import { fillGapsWithSearch }  from './webSearch';
 
@@ -53,41 +55,82 @@ function fmtTime(r: Reminder): string {
 }
 
 async function buildRemindersBlock(tz: string): Promise<string | null> {
-  const { today, tomorrow, overdue } = await getRemindersForDigest(tz);
-  if (today.length === 0 && tomorrow.length === 0 && overdue.length === 0) return null;
+  const [{ today, tomorrow, overdue }, captureNotes] = await Promise.all([
+    getRemindersForDigest(tz),
+    getNotesForDigest(tz, 48).catch(() => [] as CaptureNote[]),
+  ]);
 
-  const lines: string[] = ['🗓 *ЛИЧНЫЕ ЗАДАЧИ*'];
+  const hasReminders = today.length > 0 || tomorrow.length > 0 || overdue.length > 0;
+  const hasCapture   = captureNotes.length > 0;
+  if (!hasReminders && !hasCapture) return null;
 
-  if (today.length > 0) {
-    lines.push('\n📅 *Сегодня:*');
-    for (const r of today) {
-      const t = fmtTime(r);
-      lines.push(`• ${t ? `${t} ` : ''}${r.normalized_title}`);
+  const lines: string[] = ['🗓 *ЛИЧНЫЕ ЗАДАЧИ И ИТОГИ*'];
+
+  // ── Capture notes: call summaries & client notes ──────────────────────────
+  if (hasCapture) {
+    const callNotes = captureNotes.filter(
+      (n) => n.type === 'call_summary' || n.type === 'client_notes'
+    );
+
+    if (callNotes.length > 0) {
+      lines.push('\n📞 *Итоги звонков (48ч):*');
+      for (const note of callNotes.slice(0, 5)) {
+        lines.push(`• *${note.title}*`);
+        const actions = (note.next_actions as string[]).slice(0, 2);
+        if (actions.length) lines.push(`  → ${actions.join(' / ')}`);
+      }
+    }
+
+    // Aggregated next actions from all capture notes
+    const allActions = captureNotes
+      .flatMap((n) => (n.next_actions as string[]).map((a) => `[${n.title}] ${a}`))
+      .slice(0, 8);
+    if (allActions.length > 0) {
+      lines.push('\n🧩 *Следующие действия:*');
+      allActions.forEach((a, i) => lines.push(`${i + 1}. ${a}`));
+    }
+
+    // Waiting items
+    const allWaiting = captureNotes
+      .flatMap((n) => n.waiting_items as string[])
+      .slice(0, 5);
+    if (allWaiting.length > 0) {
+      lines.push('\n⏳ *Ждём ответа:*');
+      allWaiting.forEach((w) => lines.push(`• ${w}`));
     }
   }
 
-  if (tomorrow.length > 0) {
-    lines.push('\n📅 *Завтра:*');
-    for (const r of tomorrow) {
-      lines.push(`• ${r.normalized_title}`);
+  // ── Reminders ─────────────────────────────────────────────────────────────
+  if (hasReminders) {
+    if (today.length > 0) {
+      lines.push('\n📅 *Сегодня:*');
+      for (const r of today) {
+        const t = fmtTime(r);
+        lines.push(`• ${t ? `${t} ` : ''}${r.normalized_title}`);
+      }
     }
-  }
-
-  if (overdue.length > 0) {
-    lines.push('\n⚠️ *Просрочено:*');
-    for (const r of overdue) {
-      lines.push(`• ${r.normalized_title}${r.due_date ? ` _(${r.due_date})_` : ''}`);
+    if (tomorrow.length > 0) {
+      lines.push('\n📅 *Завтра:*');
+      for (const r of tomorrow) {
+        lines.push(`• ${r.normalized_title}`);
+      }
     }
-  }
+    if (overdue.length > 0) {
+      lines.push('\n⚠️ *Просрочено:*');
+      for (const r of overdue) {
+        lines.push(`• ${r.normalized_title}${r.due_date ? ` _(${r.due_date})_` : ''}`);
+      }
+    }
 
-  // Simple recommendation
-  const urgent = [...today, ...overdue].filter((r) => r.priority === 'urgent' || r.priority === 'high');
-  if (urgent.length > 0) {
-    lines.push(`\n💡 *Подготовиться:*\nВ первую очередь — ${urgent[0].normalized_title}`);
-  } else if (overdue.length > 0) {
-    lines.push(`\n💡 *Подготовиться:*\nЕсть просроченные задачи — разберись сегодня`);
-  } else if (today.length > 0) {
-    lines.push(`\n💡 *Подготовиться:*\nСначала — ${today[0].normalized_title}`);
+    // Simple recommendation
+    const urgent = [...today, ...overdue].filter((r) => r.priority === 'urgent' || r.priority === 'high');
+    if (urgent.length > 0) {
+      lines.push(`\n💡 *Подготовиться:*\nВ первую очередь — ${urgent[0].normalized_title}`);
+    } else if (overdue.length > 0) {
+      lines.push(`\n💡 *Подготовиться:*\nЕсть просроченные задачи — разберись сегодня`);
+    } else if (today.length > 0) {
+      lines.push(`\n💡 *Подготовиться:*\nСначала — ${today[0].normalized_title}`);
+    }
   }
 
   return lines.join('\n');
