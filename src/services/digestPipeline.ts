@@ -9,6 +9,8 @@ import { isSkipped }     from './botCommands';
 import { upsertItems, getUnsentItems, markSent, saveDigest, getLastDigest } from '../db/itemsRepo';
 import { getRemindersForDigest } from '../db/remindersRepo';
 import { getNotesForDigest }     from '../db/captureRepo';
+import { getCrmTasksForDigest }  from '../db/crmTasksRepo';
+import { CrmTask }               from '../types/crmTask';
 import { supabaseHealthCheck } from '../db/client';
 import { config }        from '../config';
 import { logger }        from '../utils/logger';
@@ -55,16 +57,27 @@ function fmtTime(r: Reminder): string {
 }
 
 async function buildRemindersBlock(tz: string): Promise<string | null> {
-  const [{ today, tomorrow, overdue }, captureNotes] = await Promise.all([
+  const [{ today, tomorrow, overdue }, captureNotes, crmTasks] = await Promise.all([
     getRemindersForDigest(tz),
     getNotesForDigest(tz, 48).catch(() => [] as CaptureNote[]),
+    getCrmTasksForDigest().catch(() => [] as CrmTask[]),
   ]);
 
   const hasReminders = today.length > 0 || tomorrow.length > 0 || overdue.length > 0;
   const hasCapture   = captureNotes.length > 0;
-  if (!hasReminders && !hasCapture) return null;
+  const hasCrm       = crmTasks.length > 0;
+  if (!hasReminders && !hasCapture && !hasCrm) return null;
 
   const lines: string[] = ['🗓 *ЛИЧНЫЕ ЗАДАЧИ И ИТОГИ*'];
+
+  // ── CRM tasks ─────────────────────────────────────────────────────────────
+  if (hasCrm) {
+    lines.push(`\n🗂 *CRM — активных задач: ${crmTasks.length}*`);
+    for (const t of crmTasks.slice(0, 10)) {
+      const dl = t.deadline_text ? ` _(${t.deadline_text})_` : '';
+      lines.push(`• *${t.contact_name}* → ${t.action_required}${dl}`);
+    }
+  }
 
   // ── Capture notes: call summaries & client notes ──────────────────────────
   if (hasCapture) {

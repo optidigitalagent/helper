@@ -59,7 +59,10 @@
       "Bash(git push *)",
       "PowerShell(node --version)",
       "PowerShell(nslookup *)",
-      "Bash(pm2 restart *)"
+      "Bash(pm2 restart *)",
+      "Bash(git commit *)",
+      "Read(//mnt/c/Users/Admin/**)",
+      "Bash(./node_modules/.bin/tsc --noEmit)"
     ]
   }
 }
