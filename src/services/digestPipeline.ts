@@ -328,15 +328,19 @@ export async function runDigestPipeline(opts?: { scheduled?: boolean }): Promise
 
   // ── STEP 8: Send each message ──────────────────────────────────────────────
   logger.info(`[digest] telegram send started messages=${messages.length}`);
-  try {
-    for (const msg of messages) {
+  let sendFailed = 0;
+  for (const msg of messages) {
+    try {
       await withTimeout(sendMessage(msg), 30_000, 'sendMessage');
+    } catch (e) {
+      sendFailed++;
+      logger.error(`[digest] failed to send message ${sendFailed}:`, (e as Error).message);
     }
-    logger.info('[digest] telegram send finished');
-  } catch (e) {
-    logger.error('[digest] telegram send failed:', (e as Error).message);
-    throw e;
   }
+  if (sendFailed === messages.length) {
+    throw new Error(`All ${messages.length} messages failed to send`);
+  }
+  logger.info(`[digest] telegram send finished (${messages.length - sendFailed}/${messages.length} sent)`);
 
   // ── STEP 9: Archive ────────────────────────────────────────────────────────
   const sentIds = ranked.map((i) => i.id);

@@ -74,7 +74,17 @@ export async function sendMessage(text: string): Promise<void> {
   const bot    = getBot();
   const chunks = splitMessage(text);
   for (const chunk of chunks) {
-    await bot.sendMessage(config.telegram.chatId, chunk, { parse_mode: 'Markdown' });
+    try {
+      await bot.sendMessage(config.telegram.chatId, chunk, { parse_mode: 'Markdown' });
+    } catch (err) {
+      const msg = (err as Error).message ?? '';
+      if (msg.includes('parse') || msg.includes('entities') || msg.includes('400')) {
+        logger.warn('[telegram] markdown parse error — retrying as plain text');
+        await bot.sendMessage(config.telegram.chatId, chunk);
+      } else {
+        throw err;
+      }
+    }
   }
   logger.info(`[telegram] sent ${chunks.length} message(s)`);
 }
