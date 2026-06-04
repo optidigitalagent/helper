@@ -12,6 +12,7 @@ import { runOrchestrator, runContentOrchestrator, buildContentInput } from '../a
 import { runPushScan }                  from './pushMonitor';
 import { discoverFeed, extractKeywords } from './sourceDiscovery';
 import { SOURCE_GOVERNANCE } from './sourceGovernance';
+import { loadWhitelist, addUserToWhitelist, removeUserFromWhitelist } from './distributionService';
 import { logger, throttledError } from '../utils/logger';
 import { config }            from '../config';
 import { Category }          from '../types';
@@ -87,14 +88,19 @@ async function handleBrief(bot: TelegramBot, chatId: number): Promise<void> {
 
 async function handleStatus(bot: TelegramBot, chatId: number): Promise<void> {
   try {
-    const last = await getLastDigest();
+    const last        = await getLastDigest();
+    const distribIds  = loadWhitelist();
+    const distribLine = `📣 *Distribution:*\nEnabled: ${distribIds.length > 0 ? 'yes' : 'no'}\nUsers: ${distribIds.length}`;
+
     if (!last) {
-      await reply(bot, chatId, '📭 Дайджестов ещё не было.');
+      await reply(bot, chatId, `📭 Дайджестов ещё не было.\n\n${distribLine}`);
       return;
     }
-    const when = new Date(last.createdAt).toLocaleString('ru-RU', { timeZone: 'Europe/Moscow' });
+    const when    = new Date(last.createdAt).toLocaleString('ru-RU', { timeZone: 'Europe/Moscow' });
     const preview = last.markdown.split('\n').slice(0, 3).join('\n');
-    await reply(bot, chatId, `📋 *Последний дайджест*\n🕐 ${when}\n\n${preview}\n\n_/brief — запустить новый_`);
+    await reply(bot, chatId,
+      `📋 *Последний дайджест*\n🕐 ${when}\n\n${preview}\n\n${distribLine}\n\n_/brief — запустить новый_`,
+    );
   } catch (err) {
     await reply(bot, chatId, `❌ ${(err as Error).message}`);
   }
@@ -505,6 +511,52 @@ async function handleEntities(bot: TelegramBot, chatId: number, typeFilter?: str
   }
 }
 
+// ─── /distrib ─────────────────────────────────────────────────────────────────
+
+async function handleDistrib(bot: TelegramBot, chatId: number, args: string): Promise<void> {
+  const parts  = args.trim().split(/\s+/);
+  const subcmd = parts[0]?.toLowerCase();
+  const userId = parts[1]?.replace(/[^0-9]/g, '');
+
+  if (subcmd === 'list') {
+    const ids = loadWhitelist();
+    if (ids.length === 0) {
+      await reply(bot, chatId, '📣 Distribution whitelist пуст.\n_/distrib add <id> — добавить_');
+    } else {
+      const lines = ids.map((id) => `- ${id}`).join('\n');
+      await reply(bot, chatId, `📣 Distribution whitelist:\n${lines}`);
+    }
+    return;
+  }
+
+  if (subcmd === 'add') {
+    if (!userId) { await reply(bot, chatId, '_/distrib add <user\\_id>_'); return; }
+    const added = addUserToWhitelist(userId);
+    await reply(bot, chatId, added
+      ? `✅ Пользователь \`${userId}\` добавлен в whitelist.`
+      : `ℹ️ Пользователь \`${userId}\` уже в whitelist.`,
+    );
+    return;
+  }
+
+  if (subcmd === 'remove') {
+    if (!userId) { await reply(bot, chatId, '_/distrib remove <user\\_id>_'); return; }
+    const removed = removeUserFromWhitelist(userId);
+    await reply(bot, chatId, removed
+      ? `🗑 Пользователь \`${userId}\` удалён из whitelist.`
+      : `❌ Пользователь \`${userId}\` не найден в whitelist.`,
+    );
+    return;
+  }
+
+  await reply(bot, chatId,
+    `*Distribution whitelist*\n\n` +
+    `/distrib list — список пользователей\n` +
+    `/distrib add <id> — добавить\n` +
+    `/distrib remove <id> — удалить`,
+  );
+}
+
 // ─── /help ────────────────────────────────────────────────────────────────────
 
 async function handleHelp(bot: TelegramBot, chatId: number): Promise<void> {
@@ -542,6 +594,13 @@ async function handleHelp(bot: TelegramBot, chatId: number): Promise<void> {
 
 export function registerBotCommands(): void {
   const bot = getBot();
+
+  // Log all incoming commands for debugging
+  bot.on('message', (msg) => {
+    if (msg.text?.startsWith('/')) {
+      logger.info(`[telegram-command] text="${msg.text.slice(0, 100)}" chatId=${msg.chat.id}`);
+    }
+  });
 
   // /clear — reset conversation history
   bot.onText(/^\/clear(@\w+)?$/, async (msg) => {
@@ -932,5 +991,14 @@ export function registerBotCommands(): void {
     await handleEntities(bot, msg.chat.id, match?.[2]);
   });
 
-  logger.info('[botCommands] commands registered');
+  // /distrib [list|add|remove]
+  bot.onText(/^\/distrib(@\w+)?(?:\s+(.*))?$/, async (msg, match) => {
+    if (!isAuthorized(msg.chat.id)) {
+      await reply(bot, msg.chat.id, '⛔ Недостаточно прав');
+      return;
+    }
+    await handleDistrib(bot, msg.chat.id, match?.[2] ?? '');
+  });
+
+  logger.info('[botCommands] commands registered (incl. distribution)');
 }

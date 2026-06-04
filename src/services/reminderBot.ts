@@ -691,6 +691,7 @@ export async function startReminderBot(): Promise<void> {
       bot.sendMessage(msg.chat.id, `❌ ${(e as Error).message.slice(0, 200)}`).catch(() => {}),
     );
   });
+  logger.info('[reminderBot] distribution commands registered');
 
   bot.onText(/^\/notes(@\w+)?$/, async (msg) => {
     await handleNotes(bot, msg.chat.id).catch((e) =>
