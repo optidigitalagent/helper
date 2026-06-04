@@ -4,6 +4,11 @@ import axios        from 'axios';
 import { Readable } from 'stream';
 import { config }   from '../config';
 import { logger }   from '../utils/logger';
+import {
+  loadWhitelist,
+  addUserToWhitelist,
+  removeUserFromWhitelist,
+} from './distributionService';
 import { parseReminder } from './reminderParser';
 import {
   createReminder,
@@ -489,6 +494,69 @@ async function handleActions(bot: TelegramBot, chatId: number): Promise<void> {
   await bot.sendMessage(chatId, lines.join('\n'), { parse_mode: 'MarkdownV2' }).catch(() => {});
 }
 
+// ─── Distribution whitelist admin commands ─────────────────────────────────
+
+function isAdminChat(chatId: number): boolean {
+  const adminIds = [config.telegram.chatId, config.reminder.defaultChatId].filter(Boolean);
+  return adminIds.includes(String(chatId));
+}
+
+async function handleDistrib(bot: TelegramBot, chatId: number, args: string): Promise<void> {
+  if (!isAdminChat(chatId)) {
+    await send(bot, chatId, '⛔ Недостаточно прав.');
+    return;
+  }
+
+  const parts = args.trim().split(/\s+/);
+  const subcmd = parts[0]?.toLowerCase();
+  const userId  = parts[1]?.replace(/[^0-9]/g, '');
+
+  if (subcmd === 'list') {
+    const ids = loadWhitelist();
+    if (ids.length === 0) {
+      await send(bot, chatId, '📋 *Whitelist пуст.*\n_/distrib add <id> — добавить_');
+    } else {
+      const lines = ids.map((id, i) => `${i + 1}. \`${id}\``).join('\n');
+      await send(bot, chatId, `📋 *Distribution whitelist (${ids.length}):*\n\n${lines}`);
+    }
+    return;
+  }
+
+  if (subcmd === 'add') {
+    if (!userId) {
+      await send(bot, chatId, '_/distrib add <user_id>_');
+      return;
+    }
+    const added = addUserToWhitelist(userId);
+    await send(bot, chatId, added
+      ? `✅ Пользователь \`${userId}\` добавлен в whitelist.`
+      : `ℹ️ Пользователь \`${userId}\` уже в whitelist.`,
+    );
+    return;
+  }
+
+  if (subcmd === 'remove') {
+    if (!userId) {
+      await send(bot, chatId, '_/distrib remove <user_id>_');
+      return;
+    }
+    const removed = removeUserFromWhitelist(userId);
+    await send(bot, chatId, removed
+      ? `🗑 Пользователь \`${userId}\` удалён из whitelist.`
+      : `❌ Пользователь \`${userId}\` не найден в whitelist.`,
+    );
+    return;
+  }
+
+  await send(bot, chatId,
+    `*Distribution whitelist*\n\n` +
+    `/distrib list — список пользователей\n` +
+    `/distrib add <id> — добавить\n` +
+    `/distrib remove <id> — удалить\n\n` +
+    `_ID пользователя можно узнать через @userinfobot_`,
+  );
+}
+
 async function handleHelp(bot: TelegramBot, chatId: number): Promise<void> {
   await send(bot, chatId,
     `*CRM & Reminder Bot*\n\n` +
@@ -508,6 +576,10 @@ async function handleHelp(bot: TelegramBot, chatId: number): Promise<void> {
     `/notes — последние 10\n` +
     `/note <id> — открыть\n` +
     `/actions — следующие шаги (48ч)\n\n` +
+    `📢 *Distribution:*\n` +
+    `/distrib list — whitelist\n` +
+    `/distrib add <id> — добавить\n` +
+    `/distrib remove <id> — удалить\n\n` +
     `💡 *Примеры закрытия:*\n` +
     `_SunCity выполнено_ — точное имя\n` +
     `_crm 1 выполнено_ — по номеру из /crm\n` +
@@ -612,6 +684,12 @@ export async function startReminderBot(): Promise<void> {
 
   bot.onText(/^\/help(@\w+)?$/, async (msg) => {
     await handleHelp(bot, msg.chat.id).catch(() => {});
+  });
+
+  bot.onText(/^\/distrib(@\w+)?(?:\s+(.*))?$/, async (msg, match) => {
+    await handleDistrib(bot, msg.chat.id, match?.[2] ?? '').catch((e) =>
+      bot.sendMessage(msg.chat.id, `❌ ${(e as Error).message.slice(0, 200)}`).catch(() => {}),
+    );
   });
 
   bot.onText(/^\/notes(@\w+)?$/, async (msg) => {

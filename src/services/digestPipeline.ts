@@ -5,6 +5,7 @@ import { rankingService, SOURCE_WEIGHTS, refreshInterestCache } from './ranking'
 import { clusterItems }  from './clustering';
 import { generateBriefWithAgents } from '../agents/digestOrchestrator';
 import { sendMessage }   from './telegram';
+import { distributeMessages } from './distributionService';
 import { isSkipped }     from './botCommands';
 import { upsertItems, getUnsentItems, markSent, saveDigest, getLastDigest } from '../db/itemsRepo';
 import { getRemindersForDigest } from '../db/remindersRepo';
@@ -324,6 +325,10 @@ export async function runDigestPipeline(opts?: { scheduled?: boolean }): Promise
     throw e;
   }
 
+  // Save digest-only messages before prepending personal data (for distribution).
+  // Distribution users should not receive private CRM/reminders data.
+  const digestMessages = [...messages];
+
   // ── Prepend personal reminders block (non-fatal) ──────────────────────────
   try {
     const remBlock = await withTimeout(
@@ -374,6 +379,11 @@ export async function runDigestPipeline(opts?: { scheduled?: boolean }): Promise
   );
 
   logger.info(`[pipeline] done — ${messages.length} message(s) sent, ${sentIds.length} items archived`);
+
+  // ── STEP 10: Distribute to whitelist (non-fatal, no LLM re-generation) ────
+  distributeMessages(digestMessages).catch((e) =>
+    logger.warn('[pipeline] distribution failed (non-fatal):', (e as Error).message),
+  );
   } finally {
     _pipelineRunning = false;
   }

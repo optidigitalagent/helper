@@ -4,6 +4,7 @@ import { startScheduler } from './scheduler';
 import { startBotPolling, getBot } from './services/telegram';
 import { registerBotCommands } from './services/botCommands';
 import { startReminderBot, stopReminderBot } from './services/reminderBot';
+import { initWhitelist } from './services/distributionService';
 import { supabaseHealthCheck } from './db/client';
 import { config } from './config';
 import { logger } from './utils/logger';
@@ -32,6 +33,7 @@ const server = app.listen(config.port, () => {
     })
     .catch((err) => logger.error('[startup] supabaseHealthCheck threw:', (err as Error).message));
 
+  initWhitelist();
   startScheduler();
   // Register handlers before polling so no updates are missed
   registerBotCommands();

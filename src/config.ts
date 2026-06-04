@@ -40,4 +40,10 @@ export const config = {
     audioModel:      process.env.REMINDER_AUDIO_TRANSCRIPTION_MODEL ?? 'whisper-1',
     defaultChatId:   process.env.REMINDER_DEFAULT_CHAT_ID ?? '',
   },
+
+  distribution: {
+    botToken:       process.env.TELEGRAM_DISTRIBUTION_BOT_TOKEN ?? '',
+    allowedUserIds: (process.env.ALLOWED_USER_IDS ?? '')
+      .split(',').map(s => s.trim()).filter(Boolean),
+  },
 };
