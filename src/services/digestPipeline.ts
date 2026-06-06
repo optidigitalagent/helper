@@ -381,9 +381,16 @@ export async function runDigestPipeline(opts?: { scheduled?: boolean }): Promise
   logger.info(`[pipeline] done — ${messages.length} message(s) sent, ${sentIds.length} items archived`);
 
   // ── STEP 10: Distribute to whitelist (non-fatal, no LLM re-generation) ────
-  distributeMessages(digestMessages).catch((e) =>
-    logger.warn('[pipeline] distribution failed (non-fatal):', (e as Error).message),
-  );
+  // Only the AI block is distributed — private CRM/reminders/other blocks stay private.
+  const AI_BLOCK_LABEL = '🤖 *ТЕХНОЛОГІЇ ТА ІНСТРУМЕНТИ AI*';
+  const aiMessages = digestMessages.filter(msg => msg.includes(AI_BLOCK_LABEL));
+  if (aiMessages.length === 0) {
+    logger.warn('[pipeline] AI block not found in digest — distribution skipped');
+  } else {
+    distributeMessages(aiMessages).catch((e) =>
+      logger.warn('[pipeline] distribution failed (non-fatal):', (e as Error).message),
+    );
+  }
   } finally {
     _pipelineRunning = false;
   }
