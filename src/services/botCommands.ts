@@ -40,7 +40,7 @@ interface PublicRateWindow {
 const publicRateWindows = new Map<number, PublicRateWindow>();
 const PUBLIC_RATE_WINDOW_MS = 60 * 60 * 1000;
 
-async function allowPublicRequest(bot: TelegramBot, chatId: number): Promise<boolean> {
+async function allowPublicRequest(bot: TelegramBot, chatId: number, cost = 1): Promise<boolean> {
   if (isOwner(chatId)) return true;
 
   const now = Date.now();
@@ -49,7 +49,7 @@ async function allowPublicRequest(bot: TelegramBot, chatId: number): Promise<boo
     ? { startedAt: now, count: 0 }
     : current;
 
-  if (window.count >= config.telegram.publicRateLimitPerHour) {
+  if (window.count + cost > config.telegram.publicRateLimitPerHour) {
     const minutes = Math.max(1, Math.ceil((PUBLIC_RATE_WINDOW_MS - (now - window.startedAt)) / 60_000));
     await bot.sendMessage(
       chatId,
@@ -58,7 +58,7 @@ async function allowPublicRequest(bot: TelegramBot, chatId: number): Promise<boo
     return false;
   }
 
-  window.count += 1;
+  window.count += cost;
   publicRateWindows.set(chatId, window);
   return true;
 }
@@ -117,6 +117,35 @@ async function handleBrief(bot: TelegramBot, chatId: number): Promise<void> {
     logger.error('[brief] digest FAILED:', msg);
     // Plain text — no parse_mode, avoids Telegram 400 on special chars in error messages
     await bot.sendMessage(chatId, `❌ Ошибка дайджеста: ${msg}`).catch(() => {});
+  }
+}
+
+async function handlePublicBrief(bot: TelegramBot, chatId: number): Promise<void> {
+  const thinking = await reply(bot, chatId, '🧠 Готовлю персональный бриф...').catch(() => undefined);
+  try {
+    const result = await runOrchestrator({
+      query: 'Подготовь краткий актуальный бриф за последние 24 часа: главное по AI, рынкам и новым трендам. Выдели только важные сигналы, объясни практическое значение и добавь ссылки из доступных данных.',
+      chatId,
+    });
+    const text = (result.synthesis?.trim() || 'Свежих данных для брифа пока нет.').slice(0, 3900);
+    const sendSafe = async () => {
+      await bot.sendMessage(chatId, text, { parse_mode: 'Markdown' }).catch(async () =>
+        bot.sendMessage(chatId, text).catch(() => {}),
+      );
+    };
+    if (thinking) {
+      await bot.editMessageText(text, {
+        chat_id: chatId,
+        message_id: thinking.message_id,
+        parse_mode: 'Markdown',
+      }).catch(sendSafe);
+    } else {
+      await sendSafe();
+    }
+  } catch (err) {
+    const message = ((err as Error).message ?? 'Unknown error').slice(0, 300);
+    logger.error('[public-brief] FAILED:', message);
+    await bot.sendMessage(chatId, `❌ Не удалось подготовить бриф: ${message}`).catch(() => {});
   }
 }
 
@@ -641,6 +670,7 @@ async function handlePublicHelp(bot: TelegramBot, chatId: number): Promise<void>
 Просто отправьте вопрос, текст, голосовое сообщение, текстовый файл или ссылку.
 
 *Команды*
+/brief — персональный актуальный бриф
 /clear — очистить историю диалога
 /analyze <url> — разобрать ссылку
 /search <запрос> — найти актуальную информацию
@@ -699,9 +729,15 @@ export function registerBotCommands(): void {
     , { parse_mode: 'Markdown' }).catch(() => {});
   });
 
-  bot.onText(/^\/brief(@\w+)?$/, async (msg) => {
-    if (!isOwner(msg.chat.id)) return;
-    await handleBrief(bot, msg.chat.id);
+  bot.onText(/^\/(?:brief|bierf)(@\w+)?$/, async (msg) => {
+    if (!canUseBot(msg.chat.id)) return;
+    if (isOwner(msg.chat.id)) {
+      await handleBrief(bot, msg.chat.id);
+      return;
+    }
+    // A public brief fans out to several agents, so it consumes five quota units.
+    if (!(await allowPublicRequest(bot, msg.chat.id, 5))) return;
+    await handlePublicBrief(bot, msg.chat.id);
   });
 
   bot.onText(/^\/status(@\w+)?$/, async (msg) => {
