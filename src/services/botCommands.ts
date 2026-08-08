@@ -21,10 +21,46 @@ import axios                 from 'axios';
 import { Readable }          from 'stream';
 
 // ─── Auth ─────────────────────────────────────────────────────────────────────
-// Only the configured chat ID can issue commands
+// Public users can chat with the agent. Owner-only commands keep access to
+// shared sources, digests, distribution settings, and other administrative data.
 
-function isAuthorized(chatId: number): boolean {
+function isOwner(chatId: number): boolean {
   return String(chatId) === String(config.telegram.chatId);
+}
+
+function canUseBot(chatId: number): boolean {
+  return config.telegram.publicAccess || isOwner(chatId);
+}
+
+interface PublicRateWindow {
+  startedAt: number;
+  count: number;
+}
+
+const publicRateWindows = new Map<number, PublicRateWindow>();
+const PUBLIC_RATE_WINDOW_MS = 60 * 60 * 1000;
+
+async function allowPublicRequest(bot: TelegramBot, chatId: number): Promise<boolean> {
+  if (isOwner(chatId)) return true;
+
+  const now = Date.now();
+  const current = publicRateWindows.get(chatId);
+  const window = !current || now - current.startedAt >= PUBLIC_RATE_WINDOW_MS
+    ? { startedAt: now, count: 0 }
+    : current;
+
+  if (window.count >= config.telegram.publicRateLimitPerHour) {
+    const minutes = Math.max(1, Math.ceil((PUBLIC_RATE_WINDOW_MS - (now - window.startedAt)) / 60_000));
+    await bot.sendMessage(
+      chatId,
+      `Лимит публичного доступа исчерпан. Попробуйте снова примерно через ${minutes} мин.`,
+    ).catch(() => {});
+    return false;
+  }
+
+  window.count += 1;
+  publicRateWindows.set(chatId, window);
+  return true;
 }
 
 // ─── Voice mode state ─────────────────────────────────────────────────────────
@@ -322,7 +358,12 @@ const VERDICT_EMOJI: Record<string, string> = {
   skip:           '🔴 Пропусти',
 };
 
-async function handleAnalyze(bot: TelegramBot, chatId: number, url: string | undefined): Promise<void> {
+async function handleAnalyze(
+  bot: TelegramBot,
+  chatId: number,
+  url: string | undefined,
+  persistToOwnerKnowledge = true,
+): Promise<void> {
   if (!url) {
     await reply(bot, chatId, '_/analyze <url> — умный анализ: стоит ли смотреть и нужно ли следить за источником_');
     return;
@@ -333,22 +374,25 @@ async function handleAnalyze(bot: TelegramBot, chatId: number, url: string | und
   try {
     const analysis = await analyzeUrl(url);
 
-    // DB saves are non-critical — never let them break the user-facing response
-    saveAnalysis(analysis).catch((e) => logger.warn('[analyze] saveAnalysis:', e.message));
-    saveDiscoveredEntities(analysis.discovered_entities, url).catch(() => {});
+    // Public analyses never alter the owner's knowledge base or future digest.
+    if (persistToOwnerKnowledge) {
+      saveAnalysis(analysis).catch((e) => logger.warn('[analyze] saveAnalysis:', e.message));
+      saveDiscoveredEntities(analysis.discovered_entities, url).catch(() => {});
 
-    const domain = (() => { try { return new URL(url).hostname.replace(/^www\./, ''); } catch { return url; } })();
-    recordSourceSignal(
-      `user_${domain}`, analysis.source_name, url,
-      analysis.quality_score, 'user_submit',
-    ).catch(() => {});
+      const domain = (() => { try { return new URL(url).hostname.replace(/^www\./, ''); } catch { return url; } })();
+      recordSourceSignal(
+        `user_${domain}`, analysis.source_name, url,
+        analysis.quality_score, 'user_submit',
+      ).catch(() => {});
+    }
 
-    // User manually submitted → always save, minimum score 55
     const score   = Math.max(analysis.quality_score, 55);
     const verdict = VERDICT_EMOJI[analysis.verdict] ?? '✅ Стоит посмотреть';
     const scoreBar = '█'.repeat(Math.round(score / 10)) + '░'.repeat(10 - Math.round(score / 10));
 
-    await ingestAnalysisForDigest({ ...analysis, quality_score: score, should_save: true }).catch(() => {});
+    if (persistToOwnerKnowledge) {
+      await ingestAnalysisForDigest({ ...analysis, quality_score: score, should_save: true }).catch(() => {});
+    }
 
     const lines: string[] = [
       `${verdict}`,
@@ -590,6 +634,24 @@ async function handleHelp(bot: TelegramBot, chatId: number): Promise<void> {
   );
 }
 
+async function handlePublicHelp(bot: TelegramBot, chatId: number): Promise<void> {
+  await reply(bot, chatId,
+    `*AI Helper — публичный агент*
+
+Просто отправьте вопрос, текст, голосовое сообщение, текстовый файл или ссылку.
+
+*Команды*
+/clear — очистить историю диалога
+/analyze <url> — разобрать ссылку
+/search <запрос> — найти актуальную информацию
+/recs [тема] — подобрать эпизоды подкастов
+/voice on|off — включить или выключить голосовые ответы
+/help — показать эту справку
+
+Ваш диалог ведётся отдельно от диалогов других пользователей.`,
+  );
+}
+
 // ─── Register all handlers ───────────────────────────────────────────────────
 
 export function registerBotCommands(): void {
@@ -602,16 +664,21 @@ export function registerBotCommands(): void {
     }
   });
 
+  bot.onText(/^\/start(@\w+)?$/, async (msg) => {
+    if (!canUseBot(msg.chat.id)) return;
+    await handlePublicHelp(bot, msg.chat.id);
+  });
+
   // /clear — reset conversation history
   bot.onText(/^\/clear(@\w+)?$/, async (msg) => {
-    if (!isAuthorized(msg.chat.id)) return;
+    if (!canUseBot(msg.chat.id)) return;
     clearHistory(msg.chat.id);
     await reply(bot, msg.chat.id, '🗑 История чата очищена');
   });
 
   // /debug — test LLM connection
   bot.onText(/^\/debug(@\w+)?$/, async (msg) => {
-    if (!isAuthorized(msg.chat.id)) return;
+    if (!isOwner(msg.chat.id)) return;
     await bot.sendMessage(msg.chat.id, '🔧 Тестирую подключение...').catch(() => {});
     try {
       const response = await chatReply('скажи "работает"');
@@ -623,57 +690,60 @@ export function registerBotCommands(): void {
 
   // /id — debug: show current chat ID and auth status
   bot.onText(/^\/id(@\w+)?$/, async (msg) => {
-    const authorized = isAuthorized(msg.chat.id);
+    const authorized = canUseBot(msg.chat.id);
+    const ownerLine = isOwner(msg.chat.id)
+      ? `\nConfigured CHAT_ID: \`${config.telegram.chatId}\``
+      : '';
     await bot.sendMessage(msg.chat.id,
-      `Chat ID: \`${msg.chat.id}\`\nUser ID: \`${msg.from?.id ?? 'unknown'}\`\nAuthorized: ${authorized ? '✅' : '❌'}\nConfigured CHAT_ID: \`${config.telegram.chatId}\``
+      `Chat ID: \`${msg.chat.id}\`\nUser ID: \`${msg.from?.id ?? 'unknown'}\`\nAccess: ${authorized ? '✅' : '❌'}${ownerLine}`
     , { parse_mode: 'Markdown' }).catch(() => {});
   });
 
   bot.onText(/^\/brief(@\w+)?$/, async (msg) => {
-    if (!isAuthorized(msg.chat.id)) return;
+    if (!isOwner(msg.chat.id)) return;
     await handleBrief(bot, msg.chat.id);
   });
 
   bot.onText(/^\/status(@\w+)?$/, async (msg) => {
-    if (!isAuthorized(msg.chat.id)) return;
+    if (!isOwner(msg.chat.id)) return;
     await handleStatus(bot, msg.chat.id);
   });
 
   bot.onText(/^\/sources(@\w+)?$/, async (msg) => {
-    if (!isAuthorized(msg.chat.id)) return;
+    if (!isOwner(msg.chat.id)) return;
     await handleSources(bot, msg.chat.id);
   });
 
   bot.onText(/^\/skip(@\w+)?(?:\s+(\S+))?$/, async (msg, match) => {
-    if (!isAuthorized(msg.chat.id)) return;
+    if (!isOwner(msg.chat.id)) return;
     await handleSkip(bot, msg.chat.id, match?.[2]);
   });
 
   bot.onText(/^\/unskip(@\w+)?(?:\s+(\S+))?$/, async (msg, match) => {
-    if (!isAuthorized(msg.chat.id)) return;
+    if (!isOwner(msg.chat.id)) return;
     await handleUnskip(bot, msg.chat.id, match?.[2]);
   });
 
   bot.onText(/^\/help(@\w+)?$/, async (msg) => {
-    if (!isAuthorized(msg.chat.id)) return;
-    await handleHelp(bot, msg.chat.id);
+    if (!canUseBot(msg.chat.id)) return;
+    await (isOwner(msg.chat.id) ? handleHelp : handlePublicHelp)(bot, msg.chat.id);
   });
 
   // /learn [url]
   bot.onText(/^\/learn(@\w+)?(?:\s+(https?:\/\/\S+))?$/, async (msg, match) => {
-    if (!isAuthorized(msg.chat.id)) return;
+    if (!isOwner(msg.chat.id)) return;
     await handleLearn(bot, msg.chat.id, match?.[2]);
   });
 
   // /forget <url>
   bot.onText(/^\/forget(@\w+)?\s+(\S+)$/, async (msg, match) => {
-    if (!isAuthorized(msg.chat.id)) return;
+    if (!isOwner(msg.chat.id)) return;
     await handleForget(bot, msg.chat.id, match?.[2]);
   });
 
   // /add <url> [note]
   bot.onText(/^\/add(@\w+)?\s+(https?:\/\/\S+)(.*)?$/, async (msg, match) => {
-    if (!isAuthorized(msg.chat.id)) return;
+    if (!isOwner(msg.chat.id)) return;
     const url  = match?.[2] ?? '';
     const note = (match?.[3] ?? '').trim();
     await handleAdd(bot, msg.chat.id, url, note);
@@ -682,7 +752,8 @@ export function registerBotCommands(): void {
   // Dedicated voice handler — more reliable than checking msg.voice inside 'message'
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   (bot as any).on('voice', async (msg: TelegramBot.Message) => {
-    if (!isAuthorized(msg.chat.id)) return;
+    if (!canUseBot(msg.chat.id)) return;
+    if (!(await allowPublicRequest(bot, msg.chat.id))) return;
     const fileId = msg.voice?.file_id;
     if (!fileId) return;
     logger.info(`[botCommands] voice message received, file_id=${fileId}`);
@@ -718,7 +789,9 @@ export function registerBotCommands(): void {
     };
     const urlMatchV = transcribed.match(URL_REGEX);
     if (urlMatchV) {
-      await handleAdd(bot, msg.chat.id, urlMatchV[0], transcribed.replace(urlMatchV[0], '').trim());
+      if (isOwner(msg.chat.id)) {
+        await handleAdd(bot, msg.chat.id, urlMatchV[0], transcribed.replace(urlMatchV[0], '').trim());
+      }
       summarizeAndSpeak(bot, msg.chat.id, urlMatchV[0]).catch((err) =>
         logger.warn(`[botCommands] summarizeAndSpeak (voice): ${(err as Error).message}`),
       );
@@ -738,10 +811,14 @@ export function registerBotCommands(): void {
 
   // Plain message: URL → auto-add, intent text → pull mode, other → chat
   bot.on('message', async (msg) => {
-    if (!isAuthorized(msg.chat.id)) return;
+    if (!canUseBot(msg.chat.id)) return;
 
     // Skip voice — handled by dedicated 'voice' event above
     if (msg.voice) return;
+
+    // Commands are handled by onText listeners and do not consume public quota here.
+    if (msg.text?.startsWith('/')) return;
+    if (!(await allowPublicRequest(bot, msg.chat.id))) return;
 
     // audio/video_note — transcribe same way
     if (msg.audio || msg.video_note) {
@@ -837,7 +914,9 @@ export function registerBotCommands(): void {
     if (urlMatch) {
       const url  = urlMatch[0];
       const note = text.replace(url, '').trim();
-      await handleAdd(bot, msg.chat.id, url, note);
+      if (isOwner(msg.chat.id)) {
+        await handleAdd(bot, msg.chat.id, url, note);
+      }
       // Fire-and-forget: analyze → text summary + voice message
       summarizeAndSpeak(bot, msg.chat.id, url).catch((err) =>
         logger.warn(`[botCommands] summarizeAndSpeak: ${(err as Error).message}`),
@@ -909,9 +988,11 @@ export function registerBotCommands(): void {
       } else {
         await sendSafe(safeResponse);
       }
-      await speakText(bot, msg.chat.id, safeResponse).catch((e) =>
-        logger.warn('[botCommands] TTS error:', (e as Error).message.slice(0, 100)),
-      );
+      if (voiceModeChats.has(msg.chat.id)) {
+        await speakText(bot, msg.chat.id, safeResponse).catch((e) =>
+          logger.warn('[botCommands] TTS error:', (e as Error).message.slice(0, 100)),
+        );
+      }
     } catch (err) {
       await bot.sendMessage(msg.chat.id, `❌ ${(err as Error).message.slice(0, 200)}`).catch(() => {});
     }
@@ -919,7 +1000,7 @@ export function registerBotCommands(): void {
 
   // /voice — toggle voice replies for text messages
   bot.onText(/^\/voice(@\w+)?(?:\s+(on|off))?$/, async (msg, match) => {
-    if (!isAuthorized(msg.chat.id)) return;
+    if (!canUseBot(msg.chat.id)) return;
     const arg = match?.[2];
     const wasOn = voiceModeChats.has(msg.chat.id);
     const turnOn = arg === 'on' || (!arg && !wasOn);
@@ -934,7 +1015,8 @@ export function registerBotCommands(): void {
 
   // /recs [тема] — классические эпизоды подкастов о философии/бизнесе/богатых людях
   bot.onText(/^\/recs(@\w+)?(?:\s+(.+))?$/, async (msg, match) => {
-    if (!isAuthorized(msg.chat.id)) return;
+    if (!canUseBot(msg.chat.id)) return;
+    if (!(await allowPublicRequest(bot, msg.chat.id))) return;
     const topic = match?.[2]?.trim();
     const thinking = await reply(bot, msg.chat.id, '🎙 Подбираю эпизоды...').catch(() => undefined);
     try {
@@ -952,7 +1034,7 @@ export function registerBotCommands(): void {
   // /ask <query> — multi-agent orchestrator
   // /push — manual trigger push scan
   bot.onText(/^\/push(@\w+)?$/, async (msg) => {
-    if (!isAuthorized(msg.chat.id)) return;
+    if (!isOwner(msg.chat.id)) return;
     await reply(bot, msg.chat.id, '🔍 Сканирую свежие сильные материалы...').catch(() => {});
     try {
       await runPushScan();
@@ -963,37 +1045,39 @@ export function registerBotCommands(): void {
 
   // /analyze <url>
   bot.onText(/^\/analyze(@\w+)?(?:\s+(https?:\/\/\S+))?$/, async (msg, match) => {
-    if (!isAuthorized(msg.chat.id)) return;
-    await handleAnalyze(bot, msg.chat.id, match?.[2]);
+    if (!canUseBot(msg.chat.id)) return;
+    if (!(await allowPublicRequest(bot, msg.chat.id))) return;
+    await handleAnalyze(bot, msg.chat.id, match?.[2], isOwner(msg.chat.id));
   });
 
   // /search <query>
   bot.onText(/^\/search(@\w+)?(?:\s+(.+))?$/, async (msg, match) => {
-    if (!isAuthorized(msg.chat.id)) return;
+    if (!canUseBot(msg.chat.id)) return;
+    if (!(await allowPublicRequest(bot, msg.chat.id))) return;
     await handleSearch(bot, msg.chat.id, match?.[2]?.trim());
   });
 
   // /tracked
   bot.onText(/^\/tracked(@\w+)?$/, async (msg) => {
-    if (!isAuthorized(msg.chat.id)) return;
+    if (!isOwner(msg.chat.id)) return;
     await handleTracked(bot, msg.chat.id);
   });
 
   // /knowledge
   bot.onText(/^\/knowledge(@\w+)?$/, async (msg) => {
-    if (!isAuthorized(msg.chat.id)) return;
+    if (!isOwner(msg.chat.id)) return;
     await handleKnowledge(bot, msg.chat.id);
   });
 
   // /entities [type]
   bot.onText(/^\/entities(@\w+)?(?:\s+(\S+))?$/, async (msg, match) => {
-    if (!isAuthorized(msg.chat.id)) return;
+    if (!isOwner(msg.chat.id)) return;
     await handleEntities(bot, msg.chat.id, match?.[2]);
   });
 
   // /distrib [list|add|remove]
   bot.onText(/^\/distrib(@\w+)?(?:\s+(.*))?$/, async (msg, match) => {
-    if (!isAuthorized(msg.chat.id)) {
+    if (!isOwner(msg.chat.id)) {
       await reply(bot, msg.chat.id, '⛔ Недостаточно прав');
       return;
     }

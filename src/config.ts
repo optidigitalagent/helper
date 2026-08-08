@@ -21,8 +21,13 @@ export const config = {
   },
 
   telegram: {
-    botToken: env('TELEGRAM_BOT_TOKEN'),
-    chatId:   env('TELEGRAM_CHAT_ID'),
+    botToken:     env('TELEGRAM_BOT_TOKEN'),
+    chatId:       env('TELEGRAM_CHAT_ID'),
+    publicAccess: (process.env.PUBLIC_BOT_ENABLED ?? 'true').toLowerCase() !== 'false',
+    publicRateLimitPerHour: Math.max(
+      1,
+      parseInt(process.env.PUBLIC_RATE_LIMIT_PER_HOUR ?? '30', 10) || 30,
+    ),
   },
 
   // Cron expression for morning digest. Default: 07:00 every day.
